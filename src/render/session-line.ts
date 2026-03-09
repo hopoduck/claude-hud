@@ -105,7 +105,7 @@ export function renderSessionLine(ctx: RenderContext): string {
       const statParts: string[] = [];
       if (modified > 0) statParts.push(`!${modified}`);
       if (added > 0) statParts.push(`+${added}`);
-      if (deleted > 0) statParts.push(`✘${deleted}`);
+      if (deleted > 0) statParts.push(`\uf00d ${deleted}`);
       if (untracked > 0) statParts.push(`?${untracked}`);
       if (statParts.length > 0) {
         gitParts.push(` ${statParts.join(' ')}`);

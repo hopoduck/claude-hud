@@ -16,7 +16,7 @@ export function renderToolsLine(ctx: RenderContext): string | null {
 
   for (const tool of runningTools.slice(-2)) {
     const target = tool.target ? truncatePath(tool.target) : '';
-    parts.push(`${yellow('◐')} ${cyan(tool.name)}${target ? label(`: ${target}`, colors) : ''}`);
+    parts.push(`${yellow('')}  ${cyan(tool.name)}${target ? label(`: ${target}`, colors) : ''}`);
   }
 
   const toolCounts = new Map<string, number>();
@@ -30,23 +30,21 @@ export function renderToolsLine(ctx: RenderContext): string | null {
     .slice(0, 4);
 
   for (const [name, count] of sortedTools) {
-    parts.push(`${green('✓')} ${name} ${label(`×${count}`, colors)}`);
+    parts.push(`${green('')}  ${name} ${label(`×${count}`, colors)}`);
   }
 
   if (parts.length === 0) {
     return null;
   }
 
-  return parts.join(' | ');
+  return `  ${parts.join(' | ')}`;
 }
 
 function truncatePath(path: string, maxLen: number = 20): string {
-  // Normalize Windows backslashes to forward slashes for consistent display
   const normalizedPath = path.replace(/\\/g, '/');
 
   if (normalizedPath.length <= maxLen) return normalizedPath;
 
-  // Split by forward slash (already normalized)
   const parts = normalizedPath.split('/');
   const filename = parts.pop() || normalizedPath;
 

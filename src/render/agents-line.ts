@@ -38,10 +38,10 @@ function getStatusIcon(
 ): string {
   switch (status) {
     case 'running':
-      return yellow('◐');
+      return yellow(' ');
     case 'completed':
     default:
-      return green('✓');
+      return green('');
   }
 }
 
@@ -57,7 +57,7 @@ function formatAgent(
     : '';
   const elapsed = formatElapsed(agent);
 
-  return `${statusIcon} ${type}${model ? ` ${model}` : ''}${desc} ${label(`(${elapsed})`, colors)}`;
+  return `${statusIcon}  ${type}${model ? ` ${model}` : ''}${desc} ${label(`(${elapsed})`, colors)}`;
 }
 
 function truncateDesc(desc: string, maxLen: number = 40): string {
