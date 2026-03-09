@@ -1,13 +1,13 @@
 export const RESET = '\x1b[0m';
 
-const DIM = '\x1b[2m';
-const RED = '\x1b[31m';
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const MAGENTA = '\x1b[35m';
-const CYAN = '\x1b[36m';
-const BRIGHT_BLUE = '\x1b[94m';
-const BRIGHT_MAGENTA = '\x1b[95m';
+const DIM = '\x1b[38;2;160;160;170m';
+const RED = '\x1b[38;2;255;140;140m';
+const GREEN = '\x1b[38;2;180;230;180m';
+const YELLOW = '\x1b[38;2;255;210;170m';
+const MAGENTA = '\x1b[38;2;255;180;200m';
+const CYAN = '\x1b[38;2;170;220;230m';
+const BRIGHT_BLUE = '\x1b[38;2;150;200;255m';
+const BRIGHT_MAGENTA = '\x1b[38;2;200;170;255m';
 
 export function green(text: string): string {
   return `${GREEN}${text}${RESET}`;
@@ -27,6 +27,10 @@ export function cyan(text: string): string {
 
 export function magenta(text: string): string {
   return `${MAGENTA}${text}${RESET}`;
+}
+
+export function brightMagenta(text: string): string {
+  return `${BRIGHT_MAGENTA}${text}${RESET}`;
 }
 
 export function dim(text: string): string {

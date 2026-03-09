@@ -1,7 +1,30 @@
 import type { RenderContext } from '../../types.js';
 import { isLimitReached } from '../../types.js';
 import { getProviderLabel } from '../../stdin.js';
-import { red, yellow, dim, getContextColor, quotaBar, RESET } from '../colors.js';
+import { red, yellow, green, dim, getContextColor, quotaBar, RESET } from '../colors.js';
+
+const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+const MIN_ELAPSED_MS = 10 * 60 * 1000;
+
+function calculatePace(usagePercent: number, resetAt: Date | null, totalWindowMs: number): number | null {
+  if (resetAt === null || usagePercent <= 0) return null;
+  const now = new Date();
+  const remainingMs = resetAt.getTime() - now.getTime();
+  if (remainingMs <= 0) return null;
+  const elapsedMs = totalWindowMs - remainingMs;
+  if (elapsedMs < MIN_ELAPSED_MS) return null;
+  const elapsedPercent = (elapsedMs / totalWindowMs) * 100;
+  return usagePercent / elapsedPercent;
+}
+
+function formatPace(pace: number | null): string {
+  if (pace === null) return '';
+  const display = pace.toFixed(1);
+  if (pace <= 1.0) return green(`↓${display}x`);
+  if (pace <= 2.0) return yellow(`↑${display}x`);
+  return red(`↑${display}x`);
+}
 
 export function renderUsageLine(ctx: RenderContext): string | null {
   const display = ctx.config?.display;
@@ -45,23 +68,37 @@ export function renderUsageLine(ctx: RenderContext): string | null {
   const fiveHourReset = formatResetTime(ctx.usageData.fiveHourResetAt);
 
   const usageBarEnabled = display?.usageBarEnabled ?? true;
+  const pace = calculatePace(fiveHour ?? 0, ctx.usageData.fiveHourResetAt, FIVE_HOUR_MS);
+  const paceStr = formatPace(pace);
+
+  let fiveHourSuffix = '';
+  if (fiveHourReset) {
+    fiveHourSuffix = paceStr
+      ? ` (${paceStr} ${fiveHourReset})`
+      : ` (${fiveHourReset} / 5h)`;
+  }
+
   const fiveHourPart = usageBarEnabled
-    ? (fiveHourReset
-        ? `${quotaBar(fiveHour ?? 0)} ${fiveHourDisplay} (${fiveHourReset} / 5h)`
-        : `${quotaBar(fiveHour ?? 0)} ${fiveHourDisplay}`)
-    : (fiveHourReset
-        ? `5h: ${fiveHourDisplay} (${fiveHourReset})`
-        : `5h: ${fiveHourDisplay}`);
+    ? `${quotaBar(fiveHour ?? 0, 5)} ${fiveHourDisplay}${fiveHourSuffix}`
+    : `5h: ${fiveHourDisplay}${fiveHourSuffix}`;
 
   const sevenDayThreshold = display?.sevenDayThreshold ?? 80;
   if (sevenDay !== null && sevenDay >= sevenDayThreshold) {
     const sevenDayDisplay = formatUsagePercent(sevenDay);
     const sevenDayReset = formatResetTime(ctx.usageData.sevenDayResetAt);
+    const sevenDayPace = calculatePace(sevenDay, ctx.usageData.sevenDayResetAt, SEVEN_DAY_MS);
+    const sevenDayPaceStr = formatPace(sevenDayPace);
+
+    let sevenDaySuffix = '';
+    if (sevenDayReset) {
+      sevenDaySuffix = sevenDayPaceStr
+        ? ` (${sevenDayPaceStr} ${sevenDayReset})`
+        : ` (${sevenDayReset} / 7d)`;
+    }
+
     const sevenDayPart = usageBarEnabled
-      ? (sevenDayReset
-          ? `${quotaBar(sevenDay)} ${sevenDayDisplay} (${sevenDayReset} / 7d)`
-          : `${quotaBar(sevenDay)} ${sevenDayDisplay}`)
-      : `7d: ${sevenDayDisplay}`;
+      ? `${quotaBar(sevenDay, 5)} ${sevenDayDisplay}${sevenDaySuffix}`
+      : `7d: ${sevenDayDisplay}${sevenDaySuffix}`;
     return `${label} ${fiveHourPart} | ${sevenDayPart}`;
   }
 

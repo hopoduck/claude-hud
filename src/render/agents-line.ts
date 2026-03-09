@@ -25,13 +25,13 @@ export function renderAgentsLine(ctx: RenderContext): string | null {
 }
 
 function formatAgent(agent: AgentEntry): string {
-  const statusIcon = agent.status === 'running' ? yellow('◐') : green('✓');
+  const statusIcon = agent.status === 'running' ? yellow('\uf110 ') : green('\uf00c');
   const type = magenta(agent.type);
   const model = agent.model ? dim(`[${agent.model}]`) : '';
   const desc = agent.description ? dim(`: ${truncateDesc(agent.description)}`) : '';
   const elapsed = formatElapsed(agent);
 
-  return `${statusIcon} ${type}${model ? ` ${model}` : ''}${desc} ${dim(`(${elapsed})`)}`;
+  return `${statusIcon}  ${type}${model ? ` ${model}` : ''}${desc} ${dim(`(${elapsed})`)}`;
 }
 
 function truncateDesc(desc: string, maxLen: number = 40): string {

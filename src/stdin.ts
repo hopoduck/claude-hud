@@ -1,5 +1,5 @@
 import type { StdinData } from './types.js';
-import { AUTOCOMPACT_BUFFER_PERCENT } from './constants.js';
+import { AUTOCOMPACT_BUFFER_PERCENT, AUTOCOMPACT_BUFFER_TOKENS } from './constants.js';
 
 export async function readStdin(): Promise<StdinData | null> {
   if (process.stdin.isTTY) {
@@ -62,10 +62,14 @@ export function getContextPercent(stdin: StdinData): number {
 }
 
 export function getBufferedPercent(stdin: StdinData): number {
-  // Prefer native percentage (v2.1.6+) - accurate and matches /context
-  // Native percentage already accounts for context correctly, no buffer needed
+  // Prefer native percentage (v2.1.6+) and add autocompact buffer
   const native = getNativePercent(stdin);
   if (native !== null) {
+    const size = stdin.context_window?.context_window_size;
+    if (size && size > 0) {
+      const bufferPercent = Math.round((AUTOCOMPACT_BUFFER_TOKENS / size) * 100);
+      return Math.min(100, native + bufferPercent);
+    }
     return native;
   }
 

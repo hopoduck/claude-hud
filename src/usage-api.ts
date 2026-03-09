@@ -43,8 +43,9 @@ interface UsageApiResult {
 }
 
 // File-based cache (HUD runs as new process each render, so in-memory cache won't persist)
-const CACHE_TTL_MS = 60_000; // 60 seconds
-const CACHE_FAILURE_TTL_MS = 15_000; // 15 seconds for failed requests
+const CACHE_TTL_MS = 300_000; // 5 minutes
+const CACHE_FAILURE_TTL_MS = 180_000; // 3 minutes for failed requests
+const CACHE_RATE_LIMIT_TTL_MS = 900_000; // 15 minutes for 429 rate limit errors
 const CACHE_LOCK_STALE_MS = 30_000;
 const CACHE_LOCK_WAIT_MS = 2_000;
 const CACHE_LOCK_POLL_MS = 50;
@@ -115,8 +116,12 @@ function readCacheState(homeDir: string, now: number, ttls: CacheTtls): CacheSta
     const content = fs.readFileSync(cachePath, 'utf8');
     const cache: CacheFile = JSON.parse(content);
 
-    // Check TTL - use shorter TTL for failure results
-    const ttl = cache.data.apiUnavailable ? ttls.failureCacheTtlMs : ttls.cacheTtlMs;
+    // Check TTL - use longer TTL for 429 rate limit errors
+    const ttl = cache.data.apiError === 'http-429'
+      ? CACHE_RATE_LIMIT_TTL_MS
+      : cache.data.apiUnavailable
+        ? ttls.failureCacheTtlMs
+        : ttls.cacheTtlMs;
     return {
       data: hydrateCacheData(cache.data),
       timestamp: cache.timestamp,

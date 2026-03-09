@@ -1,6 +1,6 @@
 import type { RenderContext } from '../../types.js';
 import { getModelName, getProviderLabel } from '../../stdin.js';
-import { cyan, dim, magenta, yellow, red } from '../colors.js';
+import { cyan, dim, magenta, brightMagenta, yellow, red } from '../colors.js';
 
 export function renderProjectLine(ctx: RenderContext): string | null {
   const display = ctx.config?.display;
@@ -23,7 +23,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     const segments = ctx.stdin.cwd.split(/[/\\]/).filter(Boolean);
     const pathLevels = ctx.config?.pathLevels ?? 1;
     const projectPath = segments.length > 0 ? segments.slice(-pathLevels).join('/') : '/';
-    projectPart = yellow(projectPath);
+    projectPart = `${magenta('\uf101')} ${yellow(projectPath)}`;
   }
 
   let gitPart = '';
@@ -58,7 +58,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
       }
     }
 
-    gitPart = `${magenta('git:(')}${cyan(gitParts.join(''))}${magenta(')')}`;
+    gitPart = `${brightMagenta('\uf0e7')} ${magenta('git:(')}${cyan(gitParts.join(''))}${magenta(')')}`;
   }
 
   if (projectPart && gitPart) {
@@ -67,10 +67,6 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     parts.push(projectPart);
   } else if (gitPart) {
     parts.push(gitPart);
-  }
-
-  if (display?.showSessionName && ctx.transcript.sessionName) {
-    parts.push(dim(ctx.transcript.sessionName));
   }
 
   if (parts.length === 0) {

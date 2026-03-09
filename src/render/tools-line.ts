@@ -15,7 +15,7 @@ export function renderToolsLine(ctx: RenderContext): string | null {
 
   for (const tool of runningTools.slice(-2)) {
     const target = tool.target ? truncatePath(tool.target) : '';
-    parts.push(`${yellow('◐')} ${cyan(tool.name)}${target ? dim(`: ${target}`) : ''}`);
+    parts.push(`${yellow('\uf110')}  ${cyan(tool.name)}${target ? dim(`: ${target}`) : ''}`);
   }
 
   const toolCounts = new Map<string, number>();
@@ -29,14 +29,14 @@ export function renderToolsLine(ctx: RenderContext): string | null {
     .slice(0, 4);
 
   for (const [name, count] of sortedTools) {
-    parts.push(`${green('✓')} ${name} ${dim(`×${count}`)}`);
+    parts.push(`${green('\uf00c')}  ${name} ${dim(`×${count}`)}`);
   }
 
   if (parts.length === 0) {
     return null;
   }
 
-  return parts.join(' | ');
+  return `  ${parts.join(' | ')}`;
 }
 
 function truncatePath(path: string, maxLen: number = 20): string {

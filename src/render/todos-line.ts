@@ -14,7 +14,7 @@ export function renderTodosLine(ctx: RenderContext): string | null {
 
   if (!inProgress) {
     if (completed === total && total > 0) {
-      return `${green('✓')} All todos complete ${dim(`(${completed}/${total})`)}`;
+      return `${green('\uf00c')}  All todos complete ${dim(`(${completed}/${total})`)}`;
     }
     return null;
   }
@@ -22,7 +22,7 @@ export function renderTodosLine(ctx: RenderContext): string | null {
   const content = truncateContent(inProgress.content);
   const progress = dim(`(${completed}/${total})`);
 
-  return `${yellow('▸')} ${content} ${progress}`;
+  return `  ${yellow('\uf0ae')}  ${content} ${progress}`;
 }
 
 function truncateContent(content: string, maxLen: number = 50): string {
