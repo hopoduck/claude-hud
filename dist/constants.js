@@ -7,4 +7,5 @@
  * this value may need adjustment.
  */
 export const AUTOCOMPACT_BUFFER_PERCENT = 0.165;
+export const AUTOCOMPACT_BUFFER_TOKENS = 33000;
 //# sourceMappingURL=constants.js.map

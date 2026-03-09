@@ -16,12 +16,12 @@ export function renderAgentsLine(ctx) {
     return lines.join('\n');
 }
 function formatAgent(agent) {
-    const statusIcon = agent.status === 'running' ? yellow('◐') : green('✓');
+    const statusIcon = agent.status === 'running' ? yellow('\uf110 ') : green('\uf00c');
     const type = magenta(agent.type);
     const model = agent.model ? dim(`[${agent.model}]`) : '';
     const desc = agent.description ? dim(`: ${truncateDesc(agent.description)}`) : '';
     const elapsed = formatElapsed(agent);
-    return `${statusIcon} ${type}${model ? ` ${model}` : ''}${desc} ${dim(`(${elapsed})`)}`;
+    return `${statusIcon}  ${type}${model ? ` ${model}` : ''}${desc} ${dim(`(${elapsed})`)}`;
 }
 function truncateDesc(desc, maxLen = 40) {
     if (desc.length <= maxLen)

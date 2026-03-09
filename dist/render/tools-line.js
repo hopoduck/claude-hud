@@ -9,7 +9,7 @@ export function renderToolsLine(ctx) {
     const completedTools = tools.filter((t) => t.status === 'completed' || t.status === 'error');
     for (const tool of runningTools.slice(-2)) {
         const target = tool.target ? truncatePath(tool.target) : '';
-        parts.push(`${yellow('◐')} ${cyan(tool.name)}${target ? dim(`: ${target}`) : ''}`);
+        parts.push(`${yellow('\uf110')}  ${cyan(tool.name)}${target ? dim(`: ${target}`) : ''}`);
     }
     const toolCounts = new Map();
     for (const tool of completedTools) {
@@ -20,12 +20,12 @@ export function renderToolsLine(ctx) {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 4);
     for (const [name, count] of sortedTools) {
-        parts.push(`${green('✓')} ${name} ${dim(`×${count}`)}`);
+        parts.push(`${green('\uf00c')}  ${name} ${dim(`×${count}`)}`);
     }
     if (parts.length === 0) {
         return null;
     }
-    return parts.join(' | ');
+    return `  ${parts.join(' | ')}`;
 }
 function truncatePath(path, maxLen = 20) {
     // Normalize Windows backslashes to forward slashes for consistent display
