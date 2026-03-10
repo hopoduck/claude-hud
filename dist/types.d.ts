@@ -63,6 +63,20 @@ export interface TranscriptData {
     sessionStart?: Date;
     sessionName?: string;
 }
+/** Supported usage API platforms */
+export type UsagePlatform = 'anthropic' | 'zai' | 'zhipu';
+/** z.ai/ZHIPU quota limit response */
+export interface ZaiQuotaLimit {
+    type: 'TOKENS_LIMIT' | 'TIME_LIMIT' | string;
+    percentage: number;
+    currentValue?: number;
+    usage?: number;
+    usageDetails?: unknown[];
+}
+/** z.ai/ZHIPU usage API response */
+export interface ZaiUsageApiResponse {
+    limits?: ZaiQuotaLimit[];
+}
 export interface RenderContext {
     stdin: StdinData;
     transcript: TranscriptData;

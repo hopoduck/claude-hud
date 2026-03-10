@@ -38,6 +38,24 @@ function isUsingCustomApiEndpoint(env = process.env) {
         return true;
     }
 }
+/**
+ * Detect which usage API platform to use based on ANTHROPIC_BASE_URL.
+ * Returns 'anthropic' for default API, 'zai' for z.ai, 'zhipu' for bigmodel.cn.
+ */
+export function detectUsagePlatform(env = process.env) {
+    const baseUrl = env.ANTHROPIC_BASE_URL?.trim() || env.ANTHROPIC_API_BASE_URL?.trim();
+    if (!baseUrl) {
+        return 'anthropic';
+    }
+    if (baseUrl.includes('api.z.ai')) {
+        return 'zai';
+    }
+    if (baseUrl.includes('open.bigmodel.cn') || baseUrl.includes('dev.bigmodel.cn')) {
+        return 'zhipu';
+    }
+    // Unknown custom endpoint - try Anthropic API anyway (will likely fail gracefully)
+    return 'anthropic';
+}
 function getCachePath(homeDir) {
     return path.join(getHudPluginDir(homeDir), '.usage-cache.json');
 }
@@ -176,6 +194,74 @@ const defaultDeps = {
     ttls: { cacheTtlMs: CACHE_TTL_MS, failureCacheTtlMs: CACHE_FAILURE_TTL_MS },
 };
 /**
+ * Get usage data from z.ai or ZHIPU API.
+ * Uses ANTHROPIC_AUTH_TOKEN from environment.
+ */
+async function getZaiUsage(platform) {
+    const baseUrl = process.env.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_API_BASE_URL;
+    if (!baseUrl) {
+        return null;
+    }
+    const now = Date.now();
+    const homeDir = os.homedir();
+    // Check cache first
+    const cacheState = readCacheState(homeDir, now, defaultDeps.ttls);
+    if (cacheState?.isFresh) {
+        return cacheState.data;
+    }
+    // Try to acquire lock to prevent thundering herd
+    let holdsCacheLock = false;
+    const lockStatus = tryAcquireCacheLock(homeDir);
+    if (lockStatus === 'busy') {
+        if (cacheState) {
+            return cacheState.data;
+        }
+        return await waitForFreshCache(homeDir, () => Date.now(), defaultDeps.ttls);
+    }
+    holdsCacheLock = lockStatus === 'acquired';
+    try {
+        // Re-check cache after acquiring lock (another process may have refreshed it)
+        const refreshedCache = readCache(homeDir, Date.now(), defaultDeps.ttls);
+        if (refreshedCache) {
+            return refreshedCache;
+        }
+        // Fetch from API
+        const apiResult = await fetchZaiUsageApi(baseUrl);
+        if (!apiResult.zaiData) {
+            const failureResult = {
+                planName: platform === 'zai' ? 'ZAI' : 'ZHIPU',
+                fiveHour: null,
+                sevenDay: null,
+                fiveHourResetAt: null,
+                sevenDayResetAt: null,
+                apiUnavailable: true,
+                apiError: apiResult.error,
+            };
+            writeCache(homeDir, failureResult, now);
+            return failureResult;
+        }
+        const mapped = mapZaiResponseToUsageData(apiResult.zaiData);
+        const result = {
+            planName: platform === 'zai' ? 'ZAI' : 'ZHIPU',
+            fiveHour: mapped.fiveHour ?? null,
+            sevenDay: mapped.sevenDay ?? null,
+            fiveHourResetAt: mapped.fiveHourResetAt ?? null,
+            sevenDayResetAt: mapped.sevenDayResetAt ?? null,
+        };
+        writeCache(homeDir, result, now);
+        return result;
+    }
+    catch (error) {
+        debug('getZaiUsage failed:', error);
+        return null;
+    }
+    finally {
+        if (holdsCacheLock) {
+            releaseCacheLock(homeDir);
+        }
+    }
+}
+/**
  * Get OAuth usage data from Anthropic API.
  * Returns null if user is an API user (no OAuth credentials) or credentials are expired.
  * Returns { apiUnavailable: true, ... } if API call fails (to show warning in HUD).
@@ -188,7 +274,12 @@ export async function getUsage(overrides = {}) {
     const deps = { ...defaultDeps, ...overrides };
     const now = deps.now();
     const homeDir = deps.homeDir();
-    // Skip usage API if user is using a custom provider
+    // Detect platform and route accordingly
+    const platform = detectUsagePlatform();
+    if (platform === 'zai' || platform === 'zhipu') {
+        return getZaiUsage(platform);
+    }
+    // Skip usage API if user is using a custom provider (non-Anthropic, non-zai/zhipu)
     if (isUsingCustomApiEndpoint()) {
         debug('Skipping usage API: custom API endpoint configured');
         return null;
@@ -540,6 +631,31 @@ function parseDate(dateStr) {
     }
     return date;
 }
+/**
+ * Convert z.ai/ZHIPU API response to UsageData format.
+ * Maps TOKENS_LIMIT to fiveHour and TIME_LIMIT to sevenDay.
+ */
+function mapZaiResponseToUsageData(response) {
+    const result = {
+        fiveHour: null,
+        sevenDay: null,
+        fiveHourResetAt: null,
+        sevenDayResetAt: null,
+    };
+    if (!response.limits) {
+        return result;
+    }
+    for (const limit of response.limits) {
+        const percentage = parseUtilization(limit.percentage);
+        if (limit.type === 'TOKENS_LIMIT') {
+            result.fiveHour = percentage;
+        }
+        else if (limit.type === 'TIME_LIMIT') {
+            result.sevenDay = percentage;
+        }
+    }
+    return result;
+}
 export function getUsageApiTimeoutMs(env = process.env) {
     const raw = env.CLAUDE_HUD_USAGE_TIMEOUT_MS?.trim();
     if (!raw)
@@ -711,6 +827,73 @@ function fetchUsageApi(accessToken) {
         });
         req.on('timeout', () => {
             debug('API request timeout');
+            req.destroy();
+            resolve({ data: null, error: 'timeout' });
+        });
+        req.end();
+    });
+}
+/**
+ * Fetch usage from z.ai or ZHIPU API.
+ * Uses ANTHROPIC_AUTH_TOKEN for authentication (no Bearer prefix).
+ */
+function fetchZaiUsageApi(baseUrl, env = process.env) {
+    return new Promise((resolve) => {
+        const authToken = env.ANTHROPIC_AUTH_TOKEN?.trim();
+        if (!authToken) {
+            debug('ANTHROPIC_AUTH_TOKEN not set for z.ai/ZHIPU');
+            resolve({ data: null, error: 'no-auth-token' });
+            return;
+        }
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(baseUrl);
+        }
+        catch {
+            debug('Invalid base URL for z.ai/ZHIPU:', baseUrl);
+            resolve({ data: null, error: 'invalid-url' });
+            return;
+        }
+        const timeoutMs = getUsageApiTimeoutMs(env);
+        const options = {
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port ? Number(parsedUrl.port) : undefined,
+            path: '/api/monitor/usage/quota/limit',
+            method: 'GET',
+            headers: {
+                'Authorization': authToken,
+                'Accept-Language': 'en-US,en',
+                'User-Agent': USAGE_API_USER_AGENT,
+            },
+            timeout: timeoutMs,
+        };
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => {
+                data += chunk.toString();
+            });
+            res.on('end', () => {
+                if (res.statusCode !== 200) {
+                    debug('z.ai/ZHIPU API returned non-200 status:', res.statusCode);
+                    resolve({ data: null, error: res.statusCode ? `http-${res.statusCode}` : 'http-error' });
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(data);
+                    resolve({ data: null, zaiData: parsed });
+                }
+                catch (error) {
+                    debug('Failed to parse z.ai/ZHIPU API response:', error);
+                    resolve({ data: null, error: 'parse' });
+                }
+            });
+        });
+        req.on('error', (error) => {
+            debug('z.ai/ZHIPU API request error:', error);
+            resolve({ data: null, error: 'network' });
+        });
+        req.on('timeout', () => {
+            debug('z.ai/ZHIPU API request timeout');
             req.destroy();
             resolve({ data: null, error: 'timeout' });
         });

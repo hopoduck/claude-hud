@@ -1,4 +1,4 @@
-import type { UsageData } from './types.js';
+import type { UsageData, UsagePlatform, ZaiUsageApiResponse } from './types.js';
 export type { UsageData } from './types.js';
 interface UsageApiResponse {
     five_hour?: {
@@ -12,9 +12,15 @@ interface UsageApiResponse {
 }
 interface UsageApiResult {
     data: UsageApiResponse | null;
+    zaiData?: ZaiUsageApiResponse;
     error?: string;
 }
 export declare const USAGE_API_USER_AGENT = "claude-code/2.1";
+/**
+ * Detect which usage API platform to use based on ANTHROPIC_BASE_URL.
+ * Returns 'anthropic' for default API, 'zai' for z.ai, 'zhipu' for bigmodel.cn.
+ */
+export declare function detectUsagePlatform(env?: NodeJS.ProcessEnv): UsagePlatform;
 type CacheTtls = {
     cacheTtlMs: number;
     failureCacheTtlMs: number;
