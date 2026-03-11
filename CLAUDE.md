@@ -117,6 +117,10 @@ The setup command adds an auto-updating command that finds the latest installed 
 
 Note: `statusLine` is NOT a valid plugin.json field. It must be configured in settings.json after plugin installation. Updates are automatic - no need to re-run setup.
 
+## Release Checklist
+
+- **버전 bump 필수**: 배포 전 반드시 `package.json`과 `.claude-plugin/plugin.json`의 `version`을 함께 올릴 것
+
 ## Dependencies
 
 - **Runtime**: Node.js 18+ or Bun
