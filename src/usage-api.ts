@@ -6,7 +6,7 @@ import * as tls from 'tls';
 import * as https from 'https';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
-import type { UsageData, UsagePlatform, ZaiUsageApiResponse } from './types.js';
+import type { UsageData, UsagePlatform, ZaiApiEnvelope, ZaiUsageApiResponse } from './types.js';
 import { createDebug } from './debug.js';
 import { getClaudeConfigDir, getHudPluginDir } from './claude-config-dir.js';
 
@@ -331,8 +331,11 @@ async function getZaiUsage(platform: UsagePlatform): Promise<UsageData | null> {
     }
 
     const mapped = mapZaiResponseToUsageData(apiResult.zaiData);
+    const levelLabel = apiResult.zaiData.level
+      ? apiResult.zaiData.level.charAt(0).toUpperCase() + apiResult.zaiData.level.slice(1)
+      : (platform === 'zai' ? 'ZAI' : 'ZHIPU');
     const result: UsageData = {
-      planName: platform === 'zai' ? 'ZAI' : 'ZHIPU',
+      planName: levelLabel,
       fiveHour: mapped.fiveHour ?? null,
       sevenDay: mapped.sevenDay ?? null,
       fiveHourResetAt: mapped.fiveHourResetAt ?? null,
@@ -793,12 +796,15 @@ function mapZaiResponseToUsageData(response: ZaiUsageApiResponse): Partial<Usage
 
   for (const limit of response.limits) {
     const percentage = parseUtilization(limit.percentage);
+    const resetAt = limit.nextResetTime
+      ? new Date(limit.nextResetTime)
+      : null;
 
     if (limit.type === 'TOKENS_LIMIT') {
       result.fiveHour = percentage;
-    } else if (limit.type === 'TIME_LIMIT') {
-      result.sevenDay = percentage;
+      result.fiveHourResetAt = resetAt;
     }
+    // TIME_LIMIT is MCP tool usage (monthly) — not relevant for HUD display
   }
 
   return result;
@@ -1057,7 +1063,10 @@ function fetchZaiUsageApi(baseUrl: string, env: NodeJS.ProcessEnv = process.env)
         }
 
         try {
-          const parsed: ZaiUsageApiResponse = JSON.parse(data);
+          const raw = JSON.parse(data);
+          // z.ai/ZHIPU wraps response in { code, msg, data: {...}, success } envelope
+          const envelope = raw as ZaiApiEnvelope;
+          const parsed: ZaiUsageApiResponse = envelope.data ?? raw;
           resolve({ data: null, zaiData: parsed });
         } catch (error) {
           debug('Failed to parse z.ai/ZHIPU API response:', error);

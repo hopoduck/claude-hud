@@ -241,8 +241,11 @@ async function getZaiUsage(platform) {
             return failureResult;
         }
         const mapped = mapZaiResponseToUsageData(apiResult.zaiData);
+        const levelLabel = apiResult.zaiData.level
+            ? apiResult.zaiData.level.charAt(0).toUpperCase() + apiResult.zaiData.level.slice(1)
+            : (platform === 'zai' ? 'ZAI' : 'ZHIPU');
         const result = {
-            planName: platform === 'zai' ? 'ZAI' : 'ZHIPU',
+            planName: levelLabel,
             fiveHour: mapped.fiveHour ?? null,
             sevenDay: mapped.sevenDay ?? null,
             fiveHourResetAt: mapped.fiveHourResetAt ?? null,
@@ -647,12 +650,14 @@ function mapZaiResponseToUsageData(response) {
     }
     for (const limit of response.limits) {
         const percentage = parseUtilization(limit.percentage);
+        const resetAt = limit.nextResetTime
+            ? new Date(limit.nextResetTime)
+            : null;
         if (limit.type === 'TOKENS_LIMIT') {
             result.fiveHour = percentage;
+            result.fiveHourResetAt = resetAt;
         }
-        else if (limit.type === 'TIME_LIMIT') {
-            result.sevenDay = percentage;
-        }
+        // TIME_LIMIT is MCP tool usage (monthly) — not relevant for HUD display
     }
     return result;
 }
@@ -879,7 +884,10 @@ function fetchZaiUsageApi(baseUrl, env = process.env) {
                     return;
                 }
                 try {
-                    const parsed = JSON.parse(data);
+                    const raw = JSON.parse(data);
+                    // z.ai/ZHIPU wraps response in { code, msg, data: {...}, success } envelope
+                    const envelope = raw;
+                    const parsed = envelope.data ?? raw;
                     resolve({ data: null, zaiData: parsed });
                 }
                 catch (error) {

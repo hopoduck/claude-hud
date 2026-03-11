@@ -84,12 +84,22 @@ export interface ZaiQuotaLimit {
   percentage: number;
   currentValue?: number;
   usage?: number;
+  nextResetTime?: number;
   usageDetails?: unknown[];
 }
 
-/** z.ai/ZHIPU usage API response */
+/** z.ai/ZHIPU usage API response (inner data) */
 export interface ZaiUsageApiResponse {
   limits?: ZaiQuotaLimit[];
+  level?: string;
+}
+
+/** z.ai/ZHIPU API envelope wrapper */
+export interface ZaiApiEnvelope {
+  code?: number;
+  msg?: string;
+  data?: ZaiUsageApiResponse;
+  success?: boolean;
 }
 
 export interface RenderContext {
