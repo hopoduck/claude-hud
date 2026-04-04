@@ -1,6 +1,14 @@
 export type LineLayoutType = 'compact' | 'expanded';
 export type AutocompactBufferMode = 'enabled' | 'disabled';
 export type ContextValueMode = 'percent' | 'tokens' | 'remaining' | 'both';
+/**
+ * Controls how the model name is displayed in the HUD badge.
+ *
+ *   full:    Show the raw display name as-is (e.g. "Opus 4.6 (1M context)")
+ *   compact: Strip redundant context-window suffix (e.g. "Opus 4.6")
+ *   short:   Strip context suffix AND "Claude " prefix (e.g. "Opus 4.6")
+ */
+export type ModelFormatMode = 'full' | 'compact' | 'short';
 export type HudElement = 'project' | 'context' | 'usage' | 'memory' | 'environment' | 'tools' | 'agents' | 'todos';
 export type HudColorName = 'dim' | 'red' | 'green' | 'yellow' | 'magenta' | 'cyan' | 'brightBlue' | 'brightMagenta';
 /** A color value: named preset, 256-color index (0-255), or hex string (#rrggbb). */
@@ -51,6 +59,8 @@ export interface HudConfig {
         usageThreshold: number;
         sevenDayThreshold: number;
         environmentThreshold: number;
+        modelFormat: ModelFormatMode;
+        modelOverride: string;
         customLine: string;
     };
     colors: HudColorOverrides;

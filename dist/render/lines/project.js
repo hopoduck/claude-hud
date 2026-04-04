@@ -1,4 +1,4 @@
-import { getModelName, getProviderLabel } from '../../stdin.js';
+import { getModelName, formatModelName, getProviderLabel } from '../../stdin.js';
 import { getOutputSpeed } from '../../speed-tracker.js';
 import { git as gitColor, gitBranch as gitBranchColor, label, model as modelColor, project as projectColor, red, custom as customColor } from '../colors.js';
 export function renderProjectLine(ctx) {
@@ -6,7 +6,7 @@ export function renderProjectLine(ctx) {
     const colors = ctx.config?.colors;
     const parts = [];
     if (display?.showModel !== false) {
-        const model = getModelName(ctx.stdin);
+        const model = formatModelName(getModelName(ctx.stdin), ctx.config?.display?.modelFormat, ctx.config?.display?.modelOverride);
         const providerLabel = getProviderLabel(ctx.stdin);
         const showUsage = display?.showUsage !== false;
         const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

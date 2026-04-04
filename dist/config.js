@@ -45,6 +45,8 @@ export const DEFAULT_CONFIG = {
         usageThreshold: 0,
         sevenDayThreshold: 80,
         environmentThreshold: 0,
+        modelFormat: 'full',
+        modelOverride: '',
         customLine: '',
     },
     colors: {
@@ -76,6 +78,9 @@ function validateAutocompactBuffer(value) {
 }
 function validateContextValue(value) {
     return value === 'percent' || value === 'tokens' || value === 'remaining' || value === 'both';
+}
+function validateModelFormat(value) {
+    return value === 'full' || value === 'compact' || value === 'short';
 }
 function validateColorName(value) {
     return value === 'dim'
@@ -230,6 +235,12 @@ export function mergeConfig(userConfig) {
         usageThreshold: validateThreshold(migrated.display?.usageThreshold, 100),
         sevenDayThreshold: validateThreshold(migrated.display?.sevenDayThreshold, 100),
         environmentThreshold: validateThreshold(migrated.display?.environmentThreshold, 100),
+        modelFormat: validateModelFormat(migrated.display?.modelFormat)
+            ? migrated.display.modelFormat
+            : DEFAULT_CONFIG.display.modelFormat,
+        modelOverride: typeof migrated.display?.modelOverride === 'string'
+            ? migrated.display.modelOverride.slice(0, 80)
+            : DEFAULT_CONFIG.display.modelOverride,
         customLine: typeof migrated.display?.customLine === 'string'
             ? migrated.display.customLine.slice(0, 80)
             : DEFAULT_CONFIG.display.customLine,
