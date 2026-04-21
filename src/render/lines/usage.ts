@@ -1,13 +1,35 @@
 import type { RenderContext } from "../../types.js";
 import { isLimitReached } from "../../types.js";
 import type { MessageKey } from "../../i18n/types.js";
-import { shouldHideUsage } from "../../stdin.js";
-import { critical, label, getQuotaColor, quotaBar, RESET } from "../colors.js";
+import { shouldHideUsage, isBedrockModelId } from "../../stdin.js";
+import { critical, label, red, yellow, green, getQuotaColor, quotaBar, RESET } from "../colors.js";
 import { getAdaptiveBarWidth } from "../../utils/terminal.js";
 import { t } from "../../i18n/index.js";
 import { progressLabel } from "./label-align.js";
 import type { TimeFormatMode } from "../../config.js";
 import { formatResetTime } from "../format-reset-time.js";
+
+const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+const MIN_ELAPSED_MS = 10 * 60 * 1000;
+
+function calculatePace(usagePercent: number, resetAt: Date | null, totalWindowMs: number): number | null {
+  if (resetAt === null || usagePercent <= 0) return null;
+  const now = new Date();
+  const remainingMs = resetAt.getTime() - now.getTime();
+  if (remainingMs <= 0) return null;
+  const elapsedMs = totalWindowMs - remainingMs;
+  if (elapsedMs < MIN_ELAPSED_MS) return null;
+  return usagePercent / ((elapsedMs / totalWindowMs) * 100);
+}
+
+function formatPace(pace: number | null): string {
+  if (pace === null) return '';
+  const d = pace.toFixed(1);
+  if (pace <= 1.0) return green(`↓${d}x`);
+  if (pace <= 2.0) return yellow(`↑${d}x`);
+  return red(`↑${d}x`);
+}
 
 export function renderUsageLine(
   ctx: RenderContext,
@@ -99,6 +121,7 @@ export function renderUsageLine(
     label: "5h",
     percent: fiveHour,
     resetAt: ctx.usageData.fiveHourResetAt,
+    totalWindowMs: FIVE_HOUR_MS,
     colors,
     usageBarEnabled,
     barWidth,
@@ -112,6 +135,7 @@ export function renderUsageLine(
       labelKey: "label.weekly",
       percent: sevenDay,
       resetAt: ctx.usageData.sevenDayResetAt,
+      totalWindowMs: SEVEN_DAY_MS,
       colors,
       usageBarEnabled,
       barWidth,
@@ -157,6 +181,7 @@ function formatUsageWindowPart({
   labelKey,
   percent,
   resetAt,
+  totalWindowMs,
   colors,
   usageBarEnabled,
   barWidth,
@@ -169,6 +194,7 @@ function formatUsageWindowPart({
   labelKey?: MessageKey;
   percent: number | null;
   resetAt: Date | null;
+  totalWindowMs?: number;
   colors?: RenderContext["config"]["colors"];
   usageBarEnabled: boolean;
   barWidth: number;
@@ -184,10 +210,14 @@ function formatUsageWindowPart({
     : label(windowLabel, colors);
   const resetsKey = timeFormat === 'absolute' ? "format.resets" : "format.resetsIn";
 
+  const pace = totalWindowMs != null ? formatPace(calculatePace(percent ?? 0, resetAt, totalWindowMs)) : '';
+
   const resetSuffix = reset
-    ? showResetLabel
-      ? `(${t(resetsKey)} ${reset})`
-      : `(${reset})`
+    ? pace
+      ? `(${pace} ${reset})`
+      : showResetLabel
+        ? `(${t(resetsKey)} ${reset})`
+        : `(${reset})`
     : "";
 
   if (usageBarEnabled) {
