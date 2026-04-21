@@ -5,6 +5,7 @@ export declare function yellow(text: string): string;
 export declare function red(text: string): string;
 export declare function cyan(text: string): string;
 export declare function magenta(text: string): string;
+export declare function brightMagenta(text: string): string;
 export declare function dim(text: string): string;
 export declare function claudeOrange(text: string): string;
 export declare function model(text: string, colors?: Partial<HudColorOverrides>): string;

@@ -29,10 +29,10 @@ export function renderAgentsLine(ctx) {
 function getStatusIcon(status) {
     switch (status) {
         case 'running':
-            return yellow('◐');
+            return yellow(' ');
         case 'completed':
         default:
-            return green('✓');
+            return green('');
     }
 }
 function formatAgent(agent, colors) {
@@ -43,7 +43,7 @@ function formatAgent(agent, colors) {
         ? label(`: ${truncateDesc(agent.description)}`, colors)
         : '';
     const elapsed = formatElapsed(agent);
-    return `${statusIcon} ${type}${model ? ` ${model}` : ''}${desc} ${label(`(${elapsed})`, colors)}`;
+    return `${statusIcon}  ${type}${model ? ` ${model}` : ''}${desc} ${label(`(${elapsed})`, colors)}`;
 }
 function truncateDesc(desc, maxLen = 40) {
     if (desc.length <= maxLen)

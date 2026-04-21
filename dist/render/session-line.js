@@ -96,7 +96,7 @@ export function renderSessionLine(ctx) {
             if (added > 0)
                 statParts.push(`+${added}`);
             if (deleted > 0)
-                statParts.push(`✘${deleted}`);
+                statParts.push(`\uf00d ${deleted}`);
             if (untracked > 0)
                 statParts.push(`?${untracked}`);
             if (statParts.length > 0) {

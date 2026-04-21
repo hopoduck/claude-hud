@@ -10,6 +10,7 @@ import { getMemoryUsage } from "./memory.js";
 import { resolveEffortLevel } from "./effort.js";
 import { applyContextWindowFallback } from "./context-cache.js";
 import { getUsageFromExternalSnapshot } from "./external-usage.js";
+import { getZaiUsage } from "./zai-usage.js";
 import { setLanguage, t } from "./i18n/index.js";
 export { getUsageFromExternalSnapshot } from "./external-usage.js";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,7 @@ export async function main(overrides = {}) {
     const deps = {
         readStdin,
         getUsageFromStdin,
+        getZaiUsage,
         getUsageFromExternalSnapshot,
         parseTranscript,
         countConfigs,
@@ -61,6 +63,9 @@ export async function main(overrides = {}) {
         let usageData = null;
         if (config.display.showUsage !== false) {
             usageData = deps.getUsageFromStdin(stdin);
+            if (!usageData) {
+                usageData = await deps.getZaiUsage();
+            }
             if (!usageData) {
                 usageData = deps.getUsageFromExternalSnapshot(config, deps.now());
             }

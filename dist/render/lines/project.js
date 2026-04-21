@@ -146,7 +146,7 @@ export function renderProjectLine(ctx) {
     if (parts.length === 0) {
         return null;
     }
-    return parts.join(' \u2502 ');
+    return parts.join(' │ ');
 }
 function formatAheadCount(ahead, gitConfig, colors) {
     const value = `↑${ahead}`;

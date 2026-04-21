@@ -11,13 +11,13 @@ export function renderTodosLine(ctx) {
     const total = todos.length;
     if (!inProgress) {
         if (completed === total && total > 0) {
-            return `${green("✓")} ${t("status.allTodosComplete")} ${label(`(${completed}/${total})`, colors)}`;
+            return `  ${green('')}  ${t("status.allTodosComplete")} ${label(`(${completed}/${total})`, colors)}`;
         }
         return null;
     }
     const content = truncateContent(inProgress.content);
     const progress = label(`(${completed}/${total})`, colors);
-    return `${yellow("▸")} ${content} ${progress}`;
+    return `  ${yellow('')}  ${content} ${progress}`;
 }
 function truncateContent(content, maxLen = 50) {
     if (content.length <= maxLen)

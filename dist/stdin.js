@@ -1,4 +1,4 @@
-import { AUTOCOMPACT_BUFFER_PERCENT } from './constants.js';
+import { AUTOCOMPACT_BUFFER_PERCENT, AUTOCOMPACT_BUFFER_TOKENS } from './constants.js';
 const DEFAULT_FIRST_BYTE_TIMEOUT_MS = 250;
 const DEFAULT_IDLE_TIMEOUT_MS = 30;
 const DEFAULT_MAX_STDIN_BYTES = 256 * 1024;
@@ -141,6 +141,11 @@ export function getBufferedPercent(stdin) {
     // own context output. The buffered fallback only approximates older versions.
     const native = getNativePercent(stdin);
     if (native !== null) {
+        const size = stdin.context_window?.context_window_size;
+        if (size && size > 0) {
+            const bufferPercent = Math.round((AUTOCOMPACT_BUFFER_TOKENS / size) * 100);
+            return Math.min(100, native + bufferPercent);
+        }
         return native;
     }
     // Fallback: manual calculation with buffer for older Claude Code versions

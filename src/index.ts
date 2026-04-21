@@ -10,6 +10,7 @@ import { getMemoryUsage } from "./memory.js";
 import { resolveEffortLevel } from "./effort.js";
 import { applyContextWindowFallback } from "./context-cache.js";
 import { getUsageFromExternalSnapshot } from "./external-usage.js";
+import { getZaiUsage, detectZaiPlatform } from "./zai-usage.js";
 import { setLanguage, t } from "./i18n/index.js";
 import type { RenderContext } from "./types.js";
 
@@ -20,6 +21,8 @@ import { realpathSync } from "node:fs";
 export type MainDeps = {
   readStdin: typeof readStdin;
   getUsageFromStdin: typeof getUsageFromStdin;
+  detectZaiPlatform: typeof detectZaiPlatform;
+  getZaiUsage: typeof getZaiUsage;
   getUsageFromExternalSnapshot: typeof getUsageFromExternalSnapshot;
   parseTranscript: typeof parseTranscript;
   countConfigs: typeof countConfigs;
@@ -39,6 +42,8 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
   const deps: MainDeps = {
     readStdin,
     getUsageFromStdin,
+    detectZaiPlatform,
+    getZaiUsage,
     getUsageFromExternalSnapshot,
     parseTranscript,
     countConfigs,
@@ -89,9 +94,13 @@ export async function main(overrides: Partial<MainDeps> = {}): Promise<void> {
 
     let usageData: RenderContext["usageData"] = null;
     if (config.display.showUsage !== false) {
-      usageData = deps.getUsageFromStdin(stdin);
-      if (!usageData) {
-        usageData = deps.getUsageFromExternalSnapshot(config, deps.now());
+      if (deps.detectZaiPlatform()) {
+        usageData = await deps.getZaiUsage();
+      } else {
+        usageData = deps.getUsageFromStdin(stdin);
+        if (!usageData) {
+          usageData = deps.getUsageFromExternalSnapshot(config, deps.now());
+        }
       }
     }
 

@@ -85,6 +85,24 @@ export interface MemoryInfo {
     freeBytes: number;
     usedPercent: number;
 }
+/** z.ai/ZHIPU quota limit entry */
+export interface ZaiQuotaLimit {
+    type: 'TOKENS_LIMIT' | 'TIME_LIMIT' | string;
+    percentage: number;
+    nextResetTime?: string | number | null;
+}
+/** z.ai/ZHIPU usage API response (inner data object) */
+export interface ZaiUsageApiResponse {
+    level?: string;
+    limits?: ZaiQuotaLimit[];
+}
+/** z.ai/ZHIPU API response envelope */
+export interface ZaiApiEnvelope {
+    code: number;
+    msg?: string;
+    success: boolean;
+    data?: ZaiUsageApiResponse;
+}
 /** Check if usage limit is reached (either window at 100%) */
 export declare function isLimitReached(data: UsageData): boolean;
 export interface SessionTokenUsage {
