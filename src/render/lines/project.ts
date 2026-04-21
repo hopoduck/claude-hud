@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { RenderContext } from '../../types.js';
 import { getModelName, formatModelName, getProviderLabel } from '../../stdin.js';
 import { getOutputSpeed } from '../../speed-tracker.js';
-import { git as gitColor, gitBranch as gitBranchColor, warning as warningColor, critical as criticalColor, label, model as modelColor, project as projectColor, red, green, yellow, dim, custom as customColor } from '../colors.js';
+import { git as gitColor, gitBranch as gitBranchColor, warning as warningColor, critical as criticalColor, label, model as modelColor, project as projectColor, brightMagenta, red, green, yellow, dim, custom as customColor } from '../colors.js';
 import { t } from '../../i18n/index.js';
 import { renderCostEstimate } from './cost.js';
 
@@ -79,7 +79,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
     const pathLevels = ctx.config?.pathLevels ?? 1;
     const projectPath = sanitizeDisplayText(segments.length > 0 ? segments.slice(-pathLevels).join('/') : '/');
     const coloredProject = projectColor(projectPath, colors);
-    projectPart = safeHyperlink(getFileHref(ctx.stdin.cwd), coloredProject);
+    projectPart = ` ${safeHyperlink(getFileHref(ctx.stdin.cwd), coloredProject)}`;
   }
 
   let gitPart = '';
@@ -112,7 +112,7 @@ export function renderProjectLine(ctx: RenderContext): string | null {
       }
     }
 
-    gitPart = `${gitColor('git:(', colors)}${gitInner.join(' ')}${gitColor(')', colors)}`;
+    gitPart = `${brightMagenta('')} ${gitColor('git:(', colors)}${gitInner.join(' ')}${gitColor(')', colors)}`;
   }
 
   if (projectPart && gitPart) {
