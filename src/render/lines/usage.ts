@@ -98,7 +98,7 @@ export function renderUsageLine(
   }
 
   const usageBarEnabled = display?.usageBarEnabled ?? true;
-  const barWidth = getAdaptiveBarWidth();
+  const barWidth = 5;
 
   if (fiveHour === null && sevenDay !== null) {
     const weeklyOnlyPart = formatUsageWindowPart({
