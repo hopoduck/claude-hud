@@ -65,5 +65,5 @@ export function renderPromptCacheLine(ctx: RenderContext, now: number = Date.now
       ? 'warning'
       : 'active';
 
-  return `${label(t('label.promptCache'), ctx.config?.colors)} ${colorPromptCacheValue(`⏱ ${formatPromptCacheCountdown(remainingMs)}`, state, ctx)}`;
+  return `${label(t('label.promptCache'), ctx.config?.colors)} ${colorPromptCacheValue(`\u{F2F2}  ${formatPromptCacheCountdown(remainingMs)}`, state, ctx)}`;
 }

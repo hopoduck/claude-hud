@@ -263,7 +263,7 @@ export function renderSessionLine(ctx: RenderContext): string {
   }
 
   if (display?.showDuration !== false && ctx.sessionDuration) {
-    parts.push(label(`⏱️  ${ctx.sessionDuration}`, colors));
+    parts.push(label(`\u{F0954}  ${ctx.sessionDuration}`, colors));
   }
 
   const promptCacheLine = renderPromptCacheLine(ctx);
