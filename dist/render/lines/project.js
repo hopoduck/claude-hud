@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getModelName, formatModelName, getProviderLabel } from '../../stdin.js';
 import { getOutputSpeed } from '../../speed-tracker.js';
-import { git as gitColor, gitBranch as gitBranchColor, warning as warningColor, critical as criticalColor, label, model as modelColor, project as projectColor, red, green, yellow, dim, custom as customColor } from '../colors.js';
+import { git as gitColor, gitBranch as gitBranchColor, warning as warningColor, critical as criticalColor, label, model as modelColor, project as projectColor, brightMagenta, red, green, yellow, dim, custom as customColor } from '../colors.js';
 import { t } from '../../i18n/index.js';
 import { renderCostEstimate } from './cost.js';
 const CONTROL_AND_BIDI_PATTERN = /[\u0000-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u206A-\u206F]/g;
@@ -71,7 +71,7 @@ export function renderProjectLine(ctx) {
         const pathLevels = ctx.config?.pathLevels ?? 1;
         const projectPath = sanitizeDisplayText(segments.length > 0 ? segments.slice(-pathLevels).join('/') : '/');
         const coloredProject = projectColor(projectPath, colors);
-        projectPart = safeHyperlink(getFileHref(ctx.stdin.cwd), coloredProject);
+        projectPart = ` ${safeHyperlink(getFileHref(ctx.stdin.cwd), coloredProject)}`;
     }
     let gitPart = '';
     const gitConfig = ctx.config?.gitStatus;
@@ -100,7 +100,7 @@ export function renderProjectLine(ctx) {
                 gitInner.push(`[${diffParts.join(' ')}]`);
             }
         }
-        gitPart = `${gitColor('git:(', colors)}${gitInner.join(' ')}${gitColor(')', colors)}`;
+        gitPart = `${brightMagenta('')} ${gitColor('git:(', colors)}${gitInner.join(' ')}${gitColor(')', colors)}`;
     }
     if (projectPart && gitPart) {
         if (branchOverflow === 'wrap') {

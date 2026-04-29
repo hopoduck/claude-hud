@@ -9,11 +9,12 @@ import { getClaudeCodeVersion } from "./version.js";
 import { getMemoryUsage } from "./memory.js";
 import { applyContextWindowFallback } from "./context-cache.js";
 import { getUsageFromExternalSnapshot } from "./external-usage.js";
-import { getZaiUsage } from "./zai-usage.js";
+import { getZaiUsage, detectZaiPlatform } from "./zai-usage.js";
 export { getUsageFromExternalSnapshot } from "./external-usage.js";
 export type MainDeps = {
     readStdin: typeof readStdin;
     getUsageFromStdin: typeof getUsageFromStdin;
+    detectZaiPlatform: typeof detectZaiPlatform;
     getZaiUsage: typeof getZaiUsage;
     getUsageFromExternalSnapshot: typeof getUsageFromExternalSnapshot;
     parseTranscript: typeof parseTranscript;

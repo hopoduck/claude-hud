@@ -1,10 +1,34 @@
 import { isLimitReached } from "../../types.js";
 import { shouldHideUsage } from "../../stdin.js";
-import { critical, label, getQuotaColor, quotaBar, RESET } from "../colors.js";
-import { getAdaptiveBarWidth } from "../../utils/terminal.js";
+import { critical, label, red, yellow, green, getQuotaColor, quotaBar, RESET } from "../colors.js";
 import { t } from "../../i18n/index.js";
 import { progressLabel } from "./label-align.js";
 import { formatResetTime } from "../format-reset-time.js";
+const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+const MIN_ELAPSED_MS = 10 * 60 * 1000;
+function calculatePace(usagePercent, resetAt, totalWindowMs) {
+    if (resetAt === null || usagePercent <= 0)
+        return null;
+    const now = new Date();
+    const remainingMs = resetAt.getTime() - now.getTime();
+    if (remainingMs <= 0)
+        return null;
+    const elapsedMs = totalWindowMs - remainingMs;
+    if (elapsedMs < MIN_ELAPSED_MS)
+        return null;
+    return usagePercent / ((elapsedMs / totalWindowMs) * 100);
+}
+function formatPace(pace) {
+    if (pace === null)
+        return '';
+    const d = pace.toFixed(1);
+    if (pace <= 1.0)
+        return green(`↓${d}x`);
+    if (pace <= 2.0)
+        return yellow(`↑${d}x`);
+    return red(`↑${d}x`);
+}
 export function renderUsageLine(ctx, alignLabels = false) {
     const display = ctx.config?.display;
     const colors = ctx.config?.colors;
@@ -57,7 +81,7 @@ export function renderUsageLine(ctx, alignLabels = false) {
         return fiveHourPart ?? sevenDayPart ?? null;
     }
     const usageBarEnabled = display?.usageBarEnabled ?? true;
-    const barWidth = getAdaptiveBarWidth();
+    const barWidth = 5;
     if (fiveHour === null && sevenDay !== null) {
         const weeklyOnlyPart = formatUsageWindowPart({
             label: t("label.weekly"),
@@ -78,6 +102,7 @@ export function renderUsageLine(ctx, alignLabels = false) {
         label: "5h",
         percent: fiveHour,
         resetAt: ctx.usageData.fiveHourResetAt,
+        totalWindowMs: FIVE_HOUR_MS,
         colors,
         usageBarEnabled,
         barWidth,
@@ -90,6 +115,7 @@ export function renderUsageLine(ctx, alignLabels = false) {
             labelKey: "label.weekly",
             percent: sevenDay,
             resetAt: ctx.usageData.sevenDayResetAt,
+            totalWindowMs: SEVEN_DAY_MS,
             colors,
             usageBarEnabled,
             barWidth,
@@ -117,17 +143,20 @@ function formatUsagePercent(percent, colors) {
     const color = getQuotaColor(percent, colors);
     return `${color}${percent}%${RESET}`;
 }
-function formatUsageWindowPart({ label: windowLabel, labelKey, percent, resetAt, colors, usageBarEnabled, barWidth, timeFormat = 'relative', showResetLabel, forceLabel = false, alignLabels = false, }) {
+function formatUsageWindowPart({ label: windowLabel, labelKey, percent, resetAt, totalWindowMs, colors, usageBarEnabled, barWidth, timeFormat = 'relative', showResetLabel, forceLabel = false, alignLabels = false, }) {
     const usageDisplay = formatUsagePercent(percent, colors);
     const reset = formatResetTime(resetAt, timeFormat);
     const styledLabel = labelKey
         ? progressLabel(labelKey, colors, alignLabels)
         : label(windowLabel, colors);
     const resetsKey = timeFormat === 'absolute' ? "format.resets" : "format.resetsIn";
+    const pace = totalWindowMs != null ? formatPace(calculatePace(percent ?? 0, resetAt, totalWindowMs)) : '';
     const resetSuffix = reset
-        ? showResetLabel
-            ? `(${t(resetsKey)} ${reset})`
-            : `(${reset})`
+        ? pace
+            ? `(${pace} ${reset})`
+            : showResetLabel
+                ? `(${t(resetsKey)} ${reset})`
+                : `(${reset})`
         : "";
     if (usageBarEnabled) {
         const body = resetSuffix
