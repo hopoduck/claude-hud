@@ -8,15 +8,16 @@ import { parseExtraCmdArg, runExtraCmd } from "./extra-cmd.js";
 import { getClaudeCodeVersion } from "./version.js";
 import { getMemoryUsage } from "./memory.js";
 import { applyContextWindowFallback } from "./context-cache.js";
-import { getUsageFromExternalSnapshot } from "./external-usage.js";
+import { getUsageFromExternalSnapshot, writeExternalUsageSnapshot } from "./external-usage.js";
 import { getZaiUsage, detectZaiPlatform } from "./zai-usage.js";
-export { getUsageFromExternalSnapshot } from "./external-usage.js";
+export { getUsageFromExternalSnapshot, writeExternalUsageSnapshot } from "./external-usage.js";
 export type MainDeps = {
     readStdin: typeof readStdin;
     getUsageFromStdin: typeof getUsageFromStdin;
     detectZaiPlatform: typeof detectZaiPlatform;
     getZaiUsage: typeof getZaiUsage;
     getUsageFromExternalSnapshot: typeof getUsageFromExternalSnapshot;
+    writeExternalUsageSnapshot: typeof writeExternalUsageSnapshot;
     parseTranscript: typeof parseTranscript;
     countConfigs: typeof countConfigs;
     getGitStatus: typeof getGitStatus;

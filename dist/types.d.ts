@@ -3,6 +3,12 @@ import type { GitStatus } from './git.js';
 export interface StdinData {
     transcript_path?: string;
     cwd?: string;
+    workspace?: {
+        current_dir?: string;
+        project_dir?: string;
+        added_dirs?: string[];
+        git_worktree?: string;
+    } | null;
     model?: {
         id?: string;
         display_name?: string;
@@ -10,6 +16,7 @@ export interface StdinData {
     context_window?: {
         context_window_size?: number;
         total_input_tokens?: number | null;
+        total_output_tokens?: number | null;
         current_usage?: {
             input_tokens?: number;
             output_tokens?: number;
@@ -57,6 +64,7 @@ export interface AgentEntry {
     status: 'running' | 'completed';
     startTime: Date;
     endTime?: Date;
+    background?: boolean;
 }
 export interface TodoItem {
     content: string;
@@ -67,6 +75,7 @@ export interface UsageData {
     sevenDay: number | null;
     fiveHourResetAt: Date | null;
     sevenDayResetAt: Date | null;
+    balanceLabel?: string | null;
 }
 export interface ExternalUsageSnapshot {
     five_hour?: {
@@ -78,6 +87,7 @@ export interface ExternalUsageSnapshot {
         resets_at?: string | number | null;
     } | null;
     updated_at?: string | number | null;
+    balance_label?: string | null;
 }
 export interface MemoryInfo {
     totalBytes: number;

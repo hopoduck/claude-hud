@@ -45,6 +45,6 @@ export function renderPromptCacheLine(ctx, now = Date.now()) {
         : remainingMs <= getPromptCacheWarningSeconds(ttlSeconds) * 1000
             ? 'warning'
             : 'active';
-    return `${label(t('label.promptCache'), ctx.config?.colors)} ${colorPromptCacheValue(`⏱ ${formatPromptCacheCountdown(remainingMs)}`, state, ctx)}`;
+    return `${label(t('label.promptCache'), ctx.config?.colors)} ${colorPromptCacheValue(`\u{F2F2}  ${formatPromptCacheCountdown(remainingMs)}`, state, ctx)}`;
 }
 //# sourceMappingURL=prompt-cache.js.map

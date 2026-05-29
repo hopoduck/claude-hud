@@ -5,10 +5,11 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { render } from '../dist/render/index.js';
+import { mergeConfig } from '../dist/config.js';
 import { renderSessionLine } from '../dist/render/session-line.js';
 import { renderProjectLine, renderGitFilesLine } from '../dist/render/lines/project.js';
 import { renderPromptCacheLine } from '../dist/render/lines/prompt-cache.js';
-import { renderToolsLine } from '../dist/render/tools-line.js';
+import { renderToolsLine, shortenToolName } from '../dist/render/tools-line.js';
 import { renderAgentsLine } from '../dist/render/agents-line.js';
 import { renderTodosLine } from '../dist/render/todos-line.js';
 import { renderUsageLine } from '../dist/render/lines/usage.js';
@@ -16,6 +17,7 @@ import { renderMemoryLine } from '../dist/render/lines/memory.js';
 import { renderIdentityLine } from '../dist/render/lines/identity.js';
 import { renderEnvironmentLine } from '../dist/render/lines/environment.js';
 import { renderSessionTokensLine } from '../dist/render/lines/session-tokens.js';
+import { renderSessionTimeLine } from '../dist/render/lines/session-time.js';
 import { getContextColor, getQuotaColor } from '../dist/render/colors.js';
 import { setLanguage } from '../dist/i18n/index.js';
 
@@ -54,7 +56,7 @@ function baseContext() {
       pathLevels: 1,
       elementOrder: ['project', 'context', 'usage', 'promptCache', 'memory', 'environment', 'tools', 'agents', 'todos'],
       gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false, branchOverflow: 'truncate', pushWarningThreshold: 0, pushCriticalThreshold: 0 },
-      display: { showModel: true, showProject: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showCost: false, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageBarEnabled: false, showResetLabel: true, showTools: true, showAgents: true, showTodos: true, showSessionTokens: false, showSessionName: false, showClaudeCodeVersion: false, showMemoryUsage: false, showPromptCache: false, promptCacheTtlSeconds: 300, showOutputStyle: false, mergeGroups: [['context', 'usage']], autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0, customLine: '' },
+      display: { showModel: true, showProject: true, showContextBar: true, contextValue: 'percent', showConfigCounts: true, showCost: false, showDuration: true, showSpeed: false, showTokenBreakdown: true, showUsage: true, usageValue: 'percent', usageBarEnabled: false, showResetLabel: true, showTools: true, showAgents: true, showTodos: true, showSessionTokens: false, showSessionName: false, showClaudeCodeVersion: false, showMemoryUsage: false, showPromptCache: false, promptCacheTtlSeconds: 300, showOutputStyle: false, mergeGroups: [['context', 'usage']], autocompactBuffer: 'enabled', usageThreshold: 0, sevenDayThreshold: 80, environmentThreshold: 0, customLine: '' },
       colors: {
         context: 'green',
         usage: 'brightBlue',
@@ -186,6 +188,19 @@ test('renderSessionLine includes duration and formats large tokens', () => {
   assert.ok(line.includes('⏱️'));
   assert.ok(line.includes('685k') || line.includes('685.0k'), 'expected large input token display');
   assert.ok(line.includes('2k'), 'expected cache token display');
+});
+
+test('renderSessionLine includes session time when enabled in compact layout', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'compact';
+  ctx.config.display.showSessionStartDate = true;
+  ctx.config.display.showLastResponseAt = true;
+  ctx.transcript.sessionStart = new Date(2026, 4, 8, 9, 14, 0);
+  ctx.transcript.lastAssistantResponseAt = new Date(Date.now() - 5 * 60 * 1000);
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('Started: 2026-05-08 09:14'), `should include session start: ${line}`);
+  assert.ok(line.includes('Last reply: 5m ago'), `should include last reply age: ${line}`);
 });
 
 test('renderSessionLine handles missing input tokens and cache creation usage', () => {
@@ -886,6 +901,124 @@ test('renderToolsLine renders running and completed tools', () => {
   assert.ok(line?.includes('.../authentication.ts'));
 });
 
+test('renderToolsLine keeps default tool cap and full names', () => {
+  const ctx = baseContext();
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'mcp__plugin_context-mode_context-mode__ctx_batch_execute', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-2', name: 'ToolSearch', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-3', name: 'Read', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-4', name: 'Edit', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-5', name: 'Write', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+  ];
+
+  const line = stripAnsi(renderToolsLine(ctx) ?? '');
+  assert.ok(line.includes('mcp__plugin_context-mode_context-mode__ctx_batch_execute'));
+  assert.ok(!line.includes('Write ×1'));
+});
+
+test('shortenToolName shortens MCP names to the final segment', () => {
+  assert.equal(
+    shortenToolName('mcp__plugin_context-mode_context-mode__ctx_batch_execute', 20),
+    'ctx_batch_execute'
+  );
+});
+
+test('shortenToolName truncates non-MCP names with an ellipsis', () => {
+  assert.equal(shortenToolName('ToolSearch', 5), 'Tool…');
+});
+
+test('shortenToolName truncates long MCP final segments', () => {
+  assert.equal(shortenToolName('mcp__plugin__execute_long_name', 5), 'exec…');
+});
+
+test('shortenToolName handles very small max lengths', () => {
+  assert.equal(shortenToolName('ToolSearch', 1), '…');
+});
+
+test('renderToolsLine renders colliding shortened MCP names separately', () => {
+  const ctx = baseContext();
+  ctx.config.display.toolNameMaxLength = 20;
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'mcp__a__run', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-2', name: 'mcp__b__run', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+  ];
+
+  const line = stripAnsi(renderToolsLine(ctx) ?? '');
+  assert.equal((line.match(/run ×1/g) ?? []).length, 2);
+});
+
+test('renderToolsLine respects toolsMaxVisible and preserves overflow indicator', () => {
+  const ctx = baseContext();
+  ctx.config.display.toolsMaxVisible = 2;
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'Read', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-2', name: 'Edit', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-3', name: 'Write', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-4', name: 'Bash', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+  ];
+
+  const line = stripAnsi(renderToolsLine(ctx) ?? '');
+  assert.ok(line.includes('Read ×1'));
+  assert.ok(line.includes('Edit ×1'));
+  assert.ok(!line.includes('Write ×1'));
+  assert.ok(!line.includes('Bash ×1'));
+  assert.ok(line.includes('+2 more'));
+});
+
+test('render wraps all completed tools when toolsMaxVisible is unlimited', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'compact';
+  ctx.config.display.toolsMaxVisible = 0;
+  ctx.config.display.showContextBar = false;
+  ctx.config.display.showConfigCounts = false;
+  ctx.config.display.showUsage = false;
+  ctx.transcript.tools = [
+    { id: 'tool-1', name: 'Read', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-2', name: 'Edit', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-3', name: 'Write', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-4', name: 'Bash', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+    { id: 'tool-5', name: 'ToolSearch', status: 'completed', startTime: new Date(0), endTime: new Date(0) },
+  ];
+
+  let lines = [];
+  withTerminal(24, () => {
+    lines = captureRenderLines(ctx);
+  });
+
+  assert.ok(lines.length > 1, 'expected the tools line to wrap on a narrow terminal');
+  assert.ok(lines.some(line => line.includes('ToolSearch ×1')));
+  assert.ok(!lines.some(line => line.includes('more')));
+});
+
+test('renderToolsLine preserves running targets and path truncation with shortened tool names', () => {
+  const ctx = baseContext();
+  ctx.config.display.toolNameMaxLength = 4;
+  ctx.transcript.tools = [
+    {
+      id: 'tool-1',
+      name: 'mcp__plugin__long_running_tool',
+      target: '/tmp/very/long/path/to/authentication.ts',
+      status: 'running',
+      startTime: new Date(0),
+    },
+  ];
+
+  const line = stripAnsi(renderToolsLine(ctx) ?? '');
+  assert.ok(line.includes('lon…'));
+  assert.ok(line.includes('.../authentication.ts'));
+});
+
+test('mergeConfig validates tool display counts as non-negative integers', () => {
+  assert.equal(mergeConfig({ display: { toolNameMaxLength: 12 } }).display.toolNameMaxLength, 12);
+  assert.equal(mergeConfig({ display: { toolsMaxVisible: 0 } }).display.toolsMaxVisible, 0);
+  assert.equal(mergeConfig({ display: { toolsMaxVisible: 2 } }).display.toolsMaxVisible, 2);
+
+  for (const value of [-1, 'abc', null, 1.5]) {
+    assert.equal(mergeConfig({ display: { toolNameMaxLength: value } }).display.toolNameMaxLength, 0);
+    assert.equal(mergeConfig({ display: { toolsMaxVisible: value } }).display.toolsMaxVisible, 4);
+  }
+});
+
 test('renderToolsLine truncates long filenames', () => {
   const ctx = baseContext();
   ctx.transcript.tools = [
@@ -1273,6 +1406,57 @@ test('renderSessionLine displays usage percentages (7d hidden when low)', () => 
   assert.ok(line.includes('6%'), 'should include 5h percentage');
 });
 
+test('renderSessionLine displays external balance labels', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    planName: 'External',
+    fiveHour: null,
+    sevenDay: null,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+    balanceLabel: '¥6.35',
+  };
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('Usage ¥6.35'), `should show balance label in compact layout: ${line}`);
+  assert.ok(!line.includes('5h'), `should bypass percentage window rendering: ${line}`);
+});
+
+test('renderSessionLine supports remaining-based usage display', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageValue = 'remaining';
+  ctx.config.display.sevenDayThreshold = 80;
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 25,
+    sevenDay: 85,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+  };
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('5h 75%'), `should show remaining 5h usage: ${line}`);
+  assert.ok(line.includes('Weekly 15%'), `should show remaining weekly usage: ${line}`);
+});
+
+test('renderSessionLine supports remaining-based compact usage display', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageCompact = true;
+  ctx.config.display.usageValue = 'remaining';
+  ctx.config.display.sevenDayThreshold = 80;
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 25,
+    sevenDay: 85,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+  };
+
+  const line = stripAnsi(renderSessionLine(ctx));
+  assert.ok(line.includes('5h: 75%'), `should show compact remaining 5h usage: ${line}`);
+  assert.ok(line.includes('7d: 15%'), `should show compact remaining 7d usage: ${line}`);
+});
+
 test('renderSessionLine shows 7d when approaching limit (>=80%)', () => {
   const ctx = baseContext();
   ctx.config.display.sevenDayThreshold = 80;
@@ -1389,6 +1573,51 @@ test('renderUsageLine shows 7d reset countdown in text-only mode', () => {
   assert.ok(line.includes('5h 45%'), `should include 5h text-only usage: ${line}`);
   assert.ok(line.includes('Weekly 85%'), `should include 7d text-only usage: ${line}`);
   assert.ok(line.includes('(resets in 1d 4h)'), `should include 7d reset countdown in text-only mode: ${line}`);
+});
+
+test('renderUsageLine supports remaining-based usage display with used-percent colors', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.usageValue = 'remaining';
+  ctx.config.display.sevenDayThreshold = 80;
+  ctx.config.colors = {
+    ...ctx.config.colors,
+    usage: 'cyan',
+    usageWarning: 'magenta',
+  };
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 25,
+    sevenDay: 85,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+  };
+
+  const line = renderUsageLine(ctx);
+  assert.ok(line, 'should render usage line');
+  assert.ok(
+    line.includes('\x1b[36m75%\x1b[0m'),
+    `expected remaining 5h usage with normal usage color, got: ${JSON.stringify(line)}`,
+  );
+  assert.ok(
+    line.includes('\x1b[35m15%\x1b[0m'),
+    `expected remaining weekly usage with used-percent warning color, got: ${JSON.stringify(line)}`,
+  );
+});
+
+test('renderUsageLine displays external balance labels', () => {
+  const ctx = baseContext();
+  ctx.usageData = {
+    planName: 'External',
+    fiveHour: null,
+    sevenDay: null,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+    balanceLabel: '¥6.35',
+  };
+
+  const line = stripAnsi(renderUsageLine(ctx) ?? '');
+  assert.equal(line, 'Usage ¥6.35');
 });
 
 test('renderUsageLine can hide reset label in text-only mode', () => {
@@ -1589,6 +1818,34 @@ test('renderUsageLine uses custom usage palette overrides', () => {
   assert.ok(line.includes('\x1b[36m25%\x1b[0m'), `expected custom usage percentage color, got: ${JSON.stringify(line)}`);
   assert.ok(line.includes('\x1b[35m████████'), `expected custom usage warning color, got: ${JSON.stringify(line)}`);
   assert.ok(line.includes('\x1b[35m80%\x1b[0m'), `expected custom usage warning percentage color, got: ${JSON.stringify(line)}`);
+});
+
+test('quotaBar and coloredBar use custom barFilled and barEmpty characters', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = true;
+  ctx.config.colors = {
+    ...ctx.config.colors,
+    barFilled: '●',
+    barEmpty: '○',
+  };
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 50,
+    sevenDay: null,
+    fiveHourResetAt: null,
+    sevenDayResetAt: null,
+  };
+
+  const usageLine = withTerminal(120, () => renderUsageLine(ctx));
+  assert.ok(usageLine, 'should render usage line');
+  assert.ok(usageLine.includes('●'), `expected custom filled char in usage bar, got: ${JSON.stringify(usageLine)}`);
+  assert.ok(usageLine.includes('○'), `expected custom empty char in usage bar, got: ${JSON.stringify(usageLine)}`);
+  assert.ok(!usageLine.includes('█'), `should not contain default filled char, got: ${JSON.stringify(usageLine)}`);
+  assert.ok(!usageLine.includes('░'), `should not contain default empty char, got: ${JSON.stringify(usageLine)}`);
+
+  const identityLine = renderIdentityLine(ctx);
+  assert.ok(identityLine.includes('●'), `expected custom filled char in context bar, got: ${JSON.stringify(identityLine)}`);
+  assert.ok(identityLine.includes('○'), `expected custom empty char in context bar, got: ${JSON.stringify(identityLine)}`);
 });
 
 test('renderSessionLine hides usage when showUsage config is false (hybrid toggle)', () => {
@@ -1957,6 +2214,17 @@ test('render expanded layout honors custom elementOrder including activity place
   assert.ok(agentIndex < todoIndex, 'todo line should follow agent line');
 });
 
+test('render expanded layout includes sessionTime element when enabled', () => {
+  const ctx = baseContext();
+  ctx.config.lineLayout = 'expanded';
+  ctx.config.elementOrder = ['project', 'sessionTime'];
+  ctx.config.display.showSessionStartDate = true;
+  ctx.transcript.sessionStart = new Date(2026, 4, 8, 9, 14, 0);
+
+  const lines = captureRenderLines(ctx);
+  assert.ok(lines.some(line => line.includes('Started: 2026-05-08 09:14')), `should render sessionTime line: ${lines.join('\n')}`);
+});
+
 test('render expanded layout omits elements not present in elementOrder', () => {
   const ctx = baseContext();
   ctx.config.lineLayout = 'expanded';
@@ -2244,6 +2512,127 @@ test('renderUsageLine shows relative and absolute time when timeFormat is "both"
   assert.match(plain, /\dh/, 'should contain relative duration hours');
   assert.ok(plain.includes(' at '), `should contain absolute "at" prefix, got: ${plain}`);
   assert.ok(plain.includes('resets in'), `should use "resets in" preposition for both mode, got: ${plain}`);
+});
+
+test('renderUsageLine shows elapsed 5h window percentage when timeFormat is "elapsed"', () => {
+  const ctx = baseContext();
+  const now = Date.now();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.timeFormat = 'elapsed';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 31,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(now + 4 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('Usage 5h 31% (20% elapsed)'), `expected elapsed window percentage, got: ${plain}`);
+  assert.ok(!plain.includes('resets'), `elapsed mode should not include reset wording, got: ${plain}`);
+});
+
+test('renderUsageLine shows elapsed 5h percentage and reset clock when timeFormat is "elapsedAndAbsolute"', () => {
+  const ctx = baseContext();
+  const now = Date.now();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.timeFormat = 'elapsedAndAbsolute';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 31,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(now + 4 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.match(plain, /Usage 5h 31% \(20% elapsed, at .+\)/, `expected elapsed percentage with absolute reset clock, got: ${plain}`);
+  assert.ok(!plain.includes('resets'), `elapsedAndAbsolute mode should not include reset wording, got: ${plain}`);
+});
+
+test('renderUsageLine rounds elapsed 7d window percentage', () => {
+  const ctx = baseContext();
+  const now = Date.now();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.timeFormat = 'elapsed';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: null,
+    sevenDay: 85,
+    fiveHourResetAt: null,
+    sevenDayResetAt: new Date(now + 5.5 * 24 * 60 * 60 * 1000),
+  };
+
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('Weekly 85% (21% elapsed)'), `expected rounded weekly elapsed percentage, got: ${plain}`);
+});
+
+test('renderUsageLine clamps elapsed window percentage to 100 at the reset boundary', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.timeFormat = 'elapsed';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 31,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(Date.now() - 1000),
+    sevenDayResetAt: null,
+  };
+
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('Usage 5h 31% (100% elapsed)'), `expected clamped elapsed percentage, got: ${plain}`);
+});
+
+test('renderUsageLine clamps elapsed window percentage to 0 when the window has not started', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.timeFormat = 'elapsed';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 31,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(Date.now() + 6 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('Usage 5h 31% (0% elapsed)'), `expected non-negative elapsed percentage, got: ${plain}`);
+});
+
+test('renderUsageLine keeps reset label hidden in elapsedAndAbsolute mode when disabled', () => {
+  const ctx = baseContext();
+  const now = Date.now();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.showResetLabel = false;
+  ctx.config.display.timeFormat = 'elapsedAndAbsolute';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 31,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(now + 4 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.match(plain, /Usage 5h 31% \(20% elapsed, at .+\)/, `expected elapsed percentage with bare absolute reset clock, got: ${plain}`);
+  assert.ok(!plain.includes('resets'), `reset wording should stay hidden, got: ${plain}`);
+});
+
+test('renderUsageLine falls back to relative reset formatting for invalid timeFormat values', () => {
+  const ctx = baseContext();
+  ctx.config.display.usageBarEnabled = false;
+  ctx.config.display.timeFormat = 'invalid-value';
+  ctx.usageData = {
+    planName: 'Pro',
+    fiveHour: 31,
+    sevenDay: 20,
+    fiveHourResetAt: new Date(Date.now() + 4 * 60 * 60 * 1000),
+    sevenDayResetAt: null,
+  };
+
+  const plain = stripAnsi(renderUsageLine(ctx));
+  assert.ok(plain.includes('resets in'), `invalid timeFormat should use relative reset wording, got: ${plain}`);
+  assert.ok(!plain.includes('elapsed'), `invalid timeFormat should not use elapsed mode, got: ${plain}`);
 });
 
 test('renderUsageLine limit-reached uses "resets in" for default relative mode', () => {

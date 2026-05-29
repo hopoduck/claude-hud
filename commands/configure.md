@@ -16,9 +16,9 @@ These are always enabled and NOT configurable:
 - Context bar `████░░░░░░ 45%`
 
 Advanced settings such as `colors.*`, `pathLevels`, `display.timeFormat`,
-`display.usageThreshold`, `display.environmentThreshold`, `display.contextWarningThreshold`,
-and `display.contextCriticalThreshold` are preserved when saving but are not
-edited by this guided flow.
+`display.usageThreshold`, `display.usageValue`, `display.environmentThreshold`,
+`display.contextWarningThreshold`, and `display.contextCriticalThreshold` are
+preserved when saving but are not edited by this guided flow.
 
 ---
 
@@ -60,7 +60,7 @@ Questions: **Turn Off → Turn On → Git Style → Layout/Reset → Language �
   - "English (Recommended)" - Default, simplest onboarding path
   - "中文" - Show HUD labels and status text in Chinese
 
-Save as `language: "en"` or `language: "zh"`.
+Save as `language: "en"` or `language: "zh-Hans"`.
 
 ### Q4: Turn Off (based on chosen preset)
 - header: "Turn Off"
@@ -172,7 +172,7 @@ Info items (Counts, Tokens, Usage, Speed, Duration) can be turned off via "Reset
 
 If user chooses "Keep current", leave `language` unchanged.
 If user chooses "English (Recommended)", save `language: "en"`.
-If user chooses "中文", save `language: "zh"`.
+If user chooses "中文", save `language: "zh-Hans"`.
 
 ### Q6: Custom Line (optional)
 - header: "Custom Line"
@@ -222,7 +222,7 @@ If user chooses "Remove", set `display.customLine` to `""` in config.
 | Option | Config |
 |--------|--------|
 | English (Recommended) | `language: "en"` |
-| 中文 | `language: "zh"` |
+| 中文 | `language: "zh-Hans"` |
 
 ---
 
@@ -252,9 +252,12 @@ If user chooses "Remove", set `display.customLine` to `""` in config.
 | Usage limits | `display.showUsage` |
 | Usage bar style | `display.usageBarEnabled` |
 | Compact usage | `display.usageCompact` |
+| Usage value | `display.usageValue` |
 | Session name | `display.showSessionName` |
 | Session duration | `display.showDuration` |
 | Session tokens | `display.showSessionTokens` |
+| Session start date | `display.showSessionStartDate` |
+| Last response time | `display.showLastResponseAt` |
 | Custom line | `display.customLine` |
 
 **Always true (not configurable):**
@@ -274,6 +277,7 @@ If user chooses "Remove", set `display.customLine` to `""` in config.
 `usageCompact` takes precedence over `usageBarEnabled` when both are set. Compact mode always uses the text format (no bar).
 
 **Note**: Usage style only applies when `display.showUsage: true`. When 7d usage >= 80%, it also shows with the same style.
+Set `display.usageValue: "remaining"` manually to show remaining quota percentages while keeping warning thresholds based on used quota.
 
 ---
 

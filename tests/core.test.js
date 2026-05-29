@@ -26,6 +26,19 @@ async function getTranscriptCacheFile(configDir) {
   return path.join(cacheDir, files[0]);
 }
 
+async function parseTempTranscript(name, entries) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const filePath = path.join(dir, name);
+  const lines = entries.map(entry => typeof entry === 'string' ? entry : JSON.stringify(entry));
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    return await parseTranscript(filePath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 test('getContextPercent returns 0 when data is missing', () => {
   assert.equal(getContextPercent({}), 0);
   assert.equal(getContextPercent({ context_window: { context_window_size: 0 } }), 0);
@@ -553,6 +566,59 @@ test('parseTranscript accumulates session token usage from assistant messages', 
   }
 });
 
+test('parseTranscript counts adjacent duplicate assistant usage once', async () => {
+  const usageEntry = {
+    type: 'assistant',
+    message: {
+      usage: {
+        input_tokens: 100,
+        output_tokens: 25,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 5,
+      },
+    },
+  };
+
+  const result = await parseTempTranscript('session-tokens-adjacent-duplicate.jsonl', [
+    usageEntry,
+    usageEntry,
+  ]);
+
+  assert.deepEqual(result.sessionTokens, {
+    inputTokens: 100,
+    outputTokens: 25,
+    cacheCreationTokens: 10,
+    cacheReadTokens: 5,
+  });
+});
+
+test('parseTranscript counts identical assistant usage separated by another line twice', async () => {
+  const usageEntry = {
+    type: 'assistant',
+    message: {
+      usage: {
+        input_tokens: 100,
+        output_tokens: 25,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 5,
+      },
+    },
+  };
+
+  const result = await parseTempTranscript('session-tokens-separated-duplicate.jsonl', [
+    usageEntry,
+    { type: 'user', timestamp: '2024-01-01T00:00:01.000Z' },
+    usageEntry,
+  ]);
+
+  assert.deepEqual(result.sessionTokens, {
+    inputTokens: 200,
+    outputTokens: 50,
+    cacheCreationTokens: 20,
+    cacheReadTokens: 10,
+  });
+});
+
 test('parseTranscript records the most recent compact_boundary and postTokens', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
   const filePath = path.join(dir, 'compact-boundary.jsonl');
@@ -1020,6 +1086,145 @@ test('parseTranscript detects agents recorded with the Agent tool name', async (
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('parseTranscript keeps background agents running until queue completion', async () => {
+  const result = await parseTempTranscript('background-agent-running.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-bg',
+            name: 'Task',
+            input: { subagent_type: 'explore', run_in_background: true },
+          },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-bg', is_error: false },
+        ],
+      },
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'running');
+  assert.equal(result.agents[0].endTime, undefined);
+});
+
+test('parseTranscript completes background agents from matching queue-operation timestamps', async () => {
+  const result = await parseTempTranscript('background-agent-completed.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-bg',
+            name: 'Task',
+            input: { subagent_type: 'explore', run_in_background: true },
+          },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-bg', is_error: false },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:01:17.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-1</task-id><tool-use-id>agent-bg</tool-use-id>',
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'completed');
+  assert.equal(result.agents[0].endTime?.toISOString(), '2024-01-01T00:01:17.000Z');
+});
+
+test('parseTranscript leaves foreground agent timing on tool_result', async () => {
+  const result = await parseTempTranscript('foreground-agent.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          { type: 'tool_use', id: 'agent-fg', name: 'Task', input: { subagent_type: 'explore' } },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-fg', is_error: false },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:01:17.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-1</task-id><tool-use-id>agent-fg</tool-use-id>',
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'completed');
+  assert.equal(result.agents[0].endTime?.toISOString(), '2024-01-01T00:00:04.000Z');
+});
+
+test('parseTranscript ignores malformed and unrelated queue-operation completions', async () => {
+  const result = await parseTempTranscript('background-agent-forged.jsonl', [
+    {
+      timestamp: '2024-01-01T00:00:00.000Z',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-bg',
+            name: 'Task',
+            input: { subagent_type: 'explore', run_in_background: true },
+          },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:00:04.000Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'agent-bg', is_error: false },
+        ],
+      },
+    },
+    {
+      timestamp: '2024-01-01T00:01:17.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-1</task-id>',
+    },
+    {
+      timestamp: '2024-01-01T00:01:18.000Z',
+      type: 'queue-operation',
+      operation: 'enqueue',
+      content: '<task-id>task-2</task-id><tool-use-id>other-agent</tool-use-id>',
+    },
+  ]);
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0].status, 'running');
+  assert.equal(result.agents[0].endTime, undefined);
 });
 
 test('parseTranscript returns undefined targets for unknown tools', async () => {

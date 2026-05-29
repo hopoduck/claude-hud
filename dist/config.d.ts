@@ -2,6 +2,7 @@ import type { Language } from './i18n/types.js';
 export type LineLayoutType = 'compact' | 'expanded';
 export type AutocompactBufferMode = 'enabled' | 'disabled';
 export type ContextValueMode = 'percent' | 'tokens' | 'remaining' | 'both';
+export type UsageValueMode = 'percent' | 'remaining';
 export type GitBranchOverflowMode = 'truncate' | 'wrap';
 /**
  * Controls how the model name is displayed in the HUD badge.
@@ -11,8 +12,9 @@ export type GitBranchOverflowMode = 'truncate' | 'wrap';
  *   short:   Strip context suffix AND "Claude " prefix (e.g. "Opus 4.6")
  */
 export type ModelFormatMode = 'full' | 'compact' | 'short';
-export type TimeFormatMode = 'relative' | 'absolute' | 'both';
-export type HudElement = 'project' | 'context' | 'usage' | 'promptCache' | 'memory' | 'environment' | 'tools' | 'agents' | 'todos';
+export type TimeFormatMode = 'relative' | 'absolute' | 'both' | 'elapsed' | 'elapsedAndAbsolute';
+export type HudElement = 'project' | 'addedDirs' | 'context' | 'usage' | 'promptCache' | 'memory' | 'environment' | 'tools' | 'agents' | 'todos' | 'sessionTime';
+export type AddedDirsLayout = 'inline' | 'line';
 export type HudColorName = 'dim' | 'red' | 'green' | 'yellow' | 'magenta' | 'cyan' | 'brightBlue' | 'brightMagenta';
 /** A color value: named preset, 256-color index (0-255), or hex string (#rrggbb). */
 export type HudColorValue = HudColorName | number | string;
@@ -28,6 +30,8 @@ export interface HudColorOverrides {
     gitBranch: HudColorValue;
     label: HudColorValue;
     custom: HudColorValue;
+    barFilled: string;
+    barEmpty: string;
 }
 export declare const DEFAULT_ELEMENT_ORDER: HudElement[];
 export declare const DEFAULT_MERGE_GROUPS: HudElement[][];
@@ -37,6 +41,7 @@ export interface HudConfig {
     showSeparators: boolean;
     pathLevels: 1 | 2 | 3;
     maxWidth: number | null;
+    forceMaxWidth: boolean;
     elementOrder: HudElement[];
     gitStatus: {
         enabled: boolean;
@@ -50,6 +55,8 @@ export interface HudConfig {
     display: {
         showModel: boolean;
         showProject: boolean;
+        showAddedDirs: boolean;
+        addedDirsLayout: AddedDirsLayout;
         showContextBar: boolean;
         contextValue: ContextValueMode;
         showConfigCounts: boolean;
@@ -58,10 +65,13 @@ export interface HudConfig {
         showSpeed: boolean;
         showTokenBreakdown: boolean;
         showUsage: boolean;
+        usageValue: UsageValueMode;
         usageBarEnabled: boolean;
         showResetLabel: boolean;
         usageCompact: boolean;
         showTools: boolean;
+        toolNameMaxLength: number;
+        toolsMaxVisible: number;
         showAgents: boolean;
         showTodos: boolean;
         showSessionName: boolean;
@@ -72,6 +82,8 @@ export interface HudConfig {
         promptCacheTtlSeconds: number;
         showSessionTokens: boolean;
         showOutputStyle: boolean;
+        showSessionStartDate: boolean;
+        showLastResponseAt: boolean;
         mergeGroups: HudElement[][];
         autocompactBuffer: AutocompactBufferMode;
         contextWarningThreshold: number;
@@ -80,6 +92,7 @@ export interface HudConfig {
         sevenDayThreshold: number;
         environmentThreshold: number;
         externalUsagePath: string;
+        externalUsageWritePath: string;
         externalUsageFreshnessMs: number;
         modelFormat: ModelFormatMode;
         modelOverride: string;

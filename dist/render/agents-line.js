@@ -22,17 +22,17 @@ export function renderAgentsLine(ctx) {
     }
     const lines = [];
     for (const agent of toShow) {
-        lines.push(formatAgent(agent, colors));
+        lines.push(`  ${formatAgent(agent, colors)}`);
     }
     return lines.join('\n');
 }
 function getStatusIcon(status) {
     switch (status) {
         case 'running':
-            return yellow(' ');
+            return yellow('\u{F06A9}');
         case 'completed':
         default:
-            return green('');
+            return green('\u{F06A9}');
     }
 }
 function formatAgent(agent, colors) {

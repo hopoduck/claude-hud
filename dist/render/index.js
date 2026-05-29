@@ -3,9 +3,10 @@ import { renderSessionLine } from './session-line.js';
 import { renderToolsLine } from './tools-line.js';
 import { renderAgentsLine } from './agents-line.js';
 import { renderTodosLine } from './todos-line.js';
-import { renderIdentityLine, renderProjectLine, renderGitFilesLine, renderEnvironmentLine, renderPromptCacheLine, renderUsageLine, renderMemoryLine, renderSessionTokensLine, } from './lines/index.js';
+import { renderIdentityLine, renderProjectLine, renderAddedDirsLine, renderGitFilesLine, renderEnvironmentLine, renderPromptCacheLine, renderUsageLine, renderMemoryLine, renderSessionTokensLine, renderSessionTimeLine, } from './lines/index.js';
 import { dim, RESET } from './colors.js';
 import { getTerminalWidth, UNKNOWN_TERMINAL_WIDTH } from '../utils/terminal.js';
+import { codePointCellWidth, isCjkAmbiguousWide } from './width.js';
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE_PATTERN = /^(?:\x1b\[[0-9;]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
 // eslint-disable-next-line no-control-regex
@@ -48,21 +49,7 @@ function segmentGraphemes(text) {
     }
     return Array.from(GRAPHEME_SEGMENTER.segment(text), segment => segment.segment);
 }
-function isWideCodePoint(codePoint) {
-    return codePoint >= 0x1100 && (codePoint <= 0x115F || // Hangul Jamo
-        codePoint === 0x2329 ||
-        codePoint === 0x232A ||
-        (codePoint >= 0x2E80 && codePoint <= 0xA4CF && codePoint !== 0x303F) ||
-        (codePoint >= 0xAC00 && codePoint <= 0xD7A3) ||
-        (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||
-        (codePoint >= 0xFE10 && codePoint <= 0xFE19) ||
-        (codePoint >= 0xFE30 && codePoint <= 0xFE6F) ||
-        (codePoint >= 0xFF00 && codePoint <= 0xFF60) ||
-        (codePoint >= 0xFFE0 && codePoint <= 0xFFE6) ||
-        (codePoint >= 0x1F300 && codePoint <= 0x1FAFF) ||
-        (codePoint >= 0x20000 && codePoint <= 0x3FFFD));
-}
-function graphemeWidth(grapheme) {
+function graphemeWidth(grapheme, ambiguousWide) {
     if (!grapheme || /^\p{Control}$/u.test(grapheme)) {
         return 0;
     }
@@ -78,8 +65,8 @@ function graphemeWidth(grapheme) {
         }
         hasVisibleBase = true;
         const codePoint = char.codePointAt(0);
-        if (codePoint !== undefined && isWideCodePoint(codePoint)) {
-            width = Math.max(width, 2);
+        if (codePoint !== undefined) {
+            width = Math.max(width, codePointCellWidth(codePoint, ambiguousWide));
         }
         else {
             width = Math.max(width, 1);
@@ -88,13 +75,14 @@ function graphemeWidth(grapheme) {
     return hasVisibleBase ? width : 0;
 }
 function visualLength(str) {
+    const ambiguousWide = isCjkAmbiguousWide();
     let width = 0;
     for (const token of splitAnsiTokens(str)) {
         if (token.type === 'ansi') {
             continue;
         }
         for (const grapheme of segmentGraphemes(token.value)) {
-            width += graphemeWidth(grapheme);
+            width += graphemeWidth(grapheme, ambiguousWide);
         }
     }
     return width;
@@ -103,6 +91,7 @@ function sliceVisible(str, maxVisible) {
     if (maxVisible <= 0) {
         return '';
     }
+    const ambiguousWide = isCjkAmbiguousWide();
     let result = '';
     let visibleWidth = 0;
     let done = false;
@@ -124,7 +113,7 @@ function sliceVisible(str, maxVisible) {
         }
         const plainChunk = str.slice(i, j);
         for (const grapheme of segmentGraphemes(plainChunk)) {
-            const graphemeCellWidth = graphemeWidth(grapheme);
+            const graphemeCellWidth = graphemeWidth(grapheme, ambiguousWide);
             if (visibleWidth + graphemeCellWidth > maxVisible) {
                 done = true;
                 break;
@@ -136,13 +125,34 @@ function sliceVisible(str, maxVisible) {
     }
     return result;
 }
+// OSC 8 close sequence (`\x1b]8;;\x1b\\`) terminates the current hyperlink.
+// If truncation cuts inside an open OSC 8 hyperlink, emitting only an SGR
+// reset (`\x1b[0m`) is not enough — the terminal keeps treating subsequent
+// output as part of the link and renders its underline across the rest of
+// the line. This helper returns the close sequence iff the last OSC 8 in
+// `str` opened a hyperlink (non-empty URL) without being followed by a
+// closer (empty URL).
+const OSC8_OPEN_OR_CLOSE = /\x1b\]8;;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const OSC8_CLOSE = '\x1b]8;;\x1b\\';
+function closeOpenHyperlink(str) {
+    let last = null;
+    let match;
+    OSC8_OPEN_OR_CLOSE.lastIndex = 0;
+    while ((match = OSC8_OPEN_OR_CLOSE.exec(str)) !== null) {
+        last = match;
+    }
+    return last && last[1].length > 0 ? OSC8_CLOSE : '';
+}
 function truncateToWidth(str, maxWidth) {
     if (maxWidth <= 0 || visualLength(str) <= maxWidth) {
         return str;
     }
     const suffix = maxWidth >= 3 ? '...' : '.'.repeat(maxWidth);
     const keep = Math.max(0, maxWidth - suffix.length);
-    return `${sliceVisible(str, keep)}${suffix}${RESET}`;
+    const sliced = sliceVisible(str, keep);
+    // Close the hyperlink (if any) before the ellipsis so the suffix renders
+    // as plain text rather than as part of the truncated link.
+    return `${sliced}${closeOpenHyperlink(sliced)}${suffix}${RESET}`;
 }
 function splitLineBySeparators(line) {
     const segments = [];
@@ -233,8 +243,14 @@ function wrapLineToWidth(line, maxWidth) {
     }
     return wrapped;
 }
+// `length` is a target visual width in cells.
+// `─` (U+2500) is East Asian Ambiguous-width: rendered as 2 cells in CJK
+// terminals and 1 cell elsewhere. Repeating it `length` times in CJK mode
+// would double the visual width and force the terminal to wrap.
 function makeSeparator(length) {
-    return dim('─'.repeat(Math.max(length, 1)));
+    const cellsPerDash = isCjkAmbiguousWide() ? 2 : 1;
+    const repeats = Math.max(1, Math.floor(length / cellsPerDash));
+    return dim('─'.repeat(repeats));
 }
 const ACTIVITY_ELEMENTS = new Set(['tools', 'agents', 'todos']);
 function buildMergeGroupLookup(mergeGroups) {
@@ -289,6 +305,8 @@ function renderElementLine(ctx, element, options) {
     switch (element) {
         case 'project':
             return renderProjectLine(ctx);
+        case 'addedDirs':
+            return renderAddedDirsLine(ctx);
         case 'context':
             return renderIdentityLine(ctx, alignProgressLabels);
         case 'usage':
@@ -305,6 +323,8 @@ function renderElementLine(ctx, element, options) {
             return display?.showAgents === false ? null : renderAgentsLine(ctx);
         case 'todos':
             return display?.showTodos === false ? null : renderTodosLine(ctx);
+        case 'sessionTime':
+            return renderSessionTimeLine(ctx);
     }
 }
 function renderCompact(ctx) {
@@ -393,7 +413,10 @@ export function render(ctx) {
     const lineLayout = ctx.config?.lineLayout ?? 'expanded';
     const showSeparators = ctx.config?.showSeparators ?? false;
     const detectedWidth = getTerminalWidth({ preferEnv: true, fallback: UNKNOWN_TERMINAL_WIDTH });
-    const terminalWidth = detectedWidth ?? ctx.config?.maxWidth ?? UNKNOWN_TERMINAL_WIDTH;
+    const configuredMaxWidth = ctx.config?.maxWidth ?? UNKNOWN_TERMINAL_WIDTH;
+    const terminalWidth = ctx.config?.forceMaxWidth && configuredMaxWidth !== UNKNOWN_TERMINAL_WIDTH
+        ? configuredMaxWidth
+        : (detectedWidth ?? configuredMaxWidth ?? UNKNOWN_TERMINAL_WIDTH);
     let lines;
     if (lineLayout === 'expanded') {
         const renderedLines = renderExpanded(ctx, terminalWidth);
