@@ -1,4 +1,11 @@
-import { AUTOCOMPACT_BUFFER_PERCENT, AUTOCOMPACT_BUFFER_TOKENS } from './constants.js';
+import { AUTOCOMPACT_BUFFER_PERCENT } from './constants.js';
+import { createDebug } from './debug.js';
+import { sanitizeTranscriptModel } from './model-source.js';
+import { sanitizeDisplayText } from './utils/sanitize.js';
+const debug = createDebug('stdin');
+const SCOPED_USAGE_MAX_WINDOWS = 8;
+const SCOPED_USAGE_LABEL_MAX_LENGTH = 64;
+const SCOPED_USAGE_RESET_MAX_LENGTH = 64;
 const DEFAULT_FIRST_BYTE_TIMEOUT_MS = 250;
 const DEFAULT_IDLE_TIMEOUT_MS = 30;
 const DEFAULT_MAX_STDIN_BYTES = 256 * 1024;
@@ -12,7 +19,8 @@ export async function readStdin(stream = process.stdin, options = {}) {
     try {
         stream.setEncoding('utf8');
     }
-    catch {
+    catch (err) {
+        debug('Failed to set stream encoding:', err);
         return null;
     }
     return await new Promise((resolve) => {
@@ -51,7 +59,8 @@ export async function readStdin(stream = process.stdin, options = {}) {
             try {
                 return JSON.parse(trimmed);
             }
-            catch {
+            catch (err) {
+                debug('JSON parse incomplete/invalid, waiting for more data');
                 return undefined;
             }
         };
@@ -86,7 +95,8 @@ export async function readStdin(stream = process.stdin, options = {}) {
             const parsed = tryParse();
             finish(parsed ?? null);
         };
-        const onError = () => {
+        const onError = (err) => {
+            debug('stdin stream error:', err);
             finish(null);
         };
         firstByteTimer = setTimeout(() => {
@@ -122,7 +132,11 @@ function getNativePercent(stdin) {
     }
     return null;
 }
-export function getContextPercent(stdin) {
+export function getContextPercent(stdin, autoCompactWindow) {
+    if (typeof autoCompactWindow === 'number' && autoCompactWindow > 0) {
+        const totalTokens = getTotalTokens(stdin);
+        return Math.min(100, Math.round((totalTokens / autoCompactWindow) * 100));
+    }
     // Prefer native percentage (v2.1.6+) - accurate and matches /context
     const native = getNativePercent(stdin);
     if (native !== null) {
@@ -136,16 +150,15 @@ export function getContextPercent(stdin) {
     const totalTokens = getTotalTokens(stdin);
     return Math.min(100, Math.round((totalTokens / size) * 100));
 }
-export function getBufferedPercent(stdin) {
+export function getBufferedPercent(stdin, autoCompactWindow) {
+    if (typeof autoCompactWindow === 'number' && autoCompactWindow > 0) {
+        const totalTokens = getTotalTokens(stdin);
+        return Math.min(100, Math.round((totalTokens / autoCompactWindow) * 100));
+    }
     // Prefer native percentage (v2.1.6+) so the HUD matches Claude Code's
     // own context output. The buffered fallback only approximates older versions.
     const native = getNativePercent(stdin);
     if (native !== null) {
-        const size = stdin.context_window?.context_window_size;
-        if (size && size > 0) {
-            const bufferPercent = Math.round((AUTOCOMPACT_BUFFER_TOKENS / size) * 100);
-            return Math.min(100, native + bufferPercent);
-        }
         return native;
     }
     // Fallback: manual calculation with buffer for older Claude Code versions
@@ -185,6 +198,41 @@ export function getModelName(stdin) {
     }
     const normalizedBedrockLabel = normalizeBedrockModelLabel(modelId);
     return normalizedBedrockLabel ?? modelId;
+}
+/**
+ * Returns true if the model string looks like a Claude/Anthropic model.
+ * Used by the "auto" modelSource heuristic to detect proxy redirects.
+ */
+function isClaudeModel(model) {
+    if (!model)
+        return true; // treat missing as Claude (safe fallback)
+    const lower = model.toLowerCase();
+    return lower.startsWith('claude-') || lower.startsWith('anthropic.');
+}
+/**
+ * Resolves the model name to display, respecting `display.modelSource` config.
+ *
+ * - "stdin":      Always use the model from Claude Code's stdin (display_name).
+ * - "transcript": Always use the model from the API response (message.model).
+ *                 Falls back to stdin when transcript has no assistant messages yet.
+ * - "auto": Use stdin for Claude models, transcript for non-Claude.
+ *                      Detects proxy redirects (cc-switch, LiteLLM, etc.) that
+ *                      serve a different model than what Claude Code requested.
+ */
+export function resolveModelName(stdin, transcript, modelSource = 'stdin') {
+    const stdinModel = getModelName(stdin);
+    // Treat TranscriptData as untrusted at the render boundary too. Callers and
+    // poisoned cache objects can bypass parse-time normalization.
+    const transcriptModel = sanitizeTranscriptModel(transcript?.lastAssistantModel);
+    if (modelSource === 'stdin' || !transcriptModel) {
+        return stdinModel;
+    }
+    if (modelSource === 'transcript') {
+        return transcriptModel;
+    }
+    // auto: prefer transcript only when the API served a non-Claude model
+    // (indicates proxy redirect). Claude models keep stdin for pretty formatting.
+    return isClaudeModel(transcriptModel) ? stdinModel : transcriptModel;
 }
 export function isBedrockModelId(modelId) {
     if (!modelId) {
@@ -241,7 +289,8 @@ export function getUsageFromStdin(stdin) {
     }
     const fiveHour = parseRateLimitPercent(rateLimits.five_hour?.used_percentage);
     const sevenDay = parseRateLimitPercent(rateLimits.seven_day?.used_percentage);
-    if (fiveHour === null && sevenDay === null) {
+    const scopedWindows = parseScopedWindows(rateLimits.model_scoped);
+    if (fiveHour === null && sevenDay === null && scopedWindows.length === 0) {
         return null;
     }
     return {
@@ -249,7 +298,51 @@ export function getUsageFromStdin(stdin) {
         sevenDay,
         fiveHourResetAt: parseRateLimitResetAt(rateLimits.five_hour?.resets_at),
         sevenDayResetAt: parseRateLimitResetAt(rateLimits.seven_day?.resets_at),
+        ...(scopedWindows.length > 0 && { scopedWindows }),
     };
+}
+/**
+ * Parses `rate_limits.model_scoped` (model-scoped weekly windows, e.g. Fable).
+ * The upstream schema carries `utilization` on the same 0-100 scale used by
+ * the generic rate-limit windows. Malformed entries are dropped, and both the
+ * retained entry count and label size are bounded because stdin is untrusted.
+ */
+function parseScopedWindows(modelScoped) {
+    if (!Array.isArray(modelScoped)) {
+        return [];
+    }
+    const windows = [];
+    for (const raw of modelScoped) {
+        if (windows.length >= SCOPED_USAGE_MAX_WINDOWS) {
+            break;
+        }
+        const entry = raw;
+        const label = typeof entry?.display_name === 'string'
+            ? sanitizeDisplayText(entry.display_name).trim().slice(0, SCOPED_USAGE_LABEL_MAX_LENGTH)
+            : '';
+        if (!label) {
+            continue;
+        }
+        const utilization = entry?.utilization;
+        const percent = utilization === null
+            ? null
+            : parseRateLimitPercent(utilization);
+        if (utilization !== null && percent === null) {
+            continue;
+        }
+        const resetAtRaw = entry?.resets_at;
+        const resetAt = typeof resetAtRaw === 'string'
+            && resetAtRaw.length <= SCOPED_USAGE_RESET_MAX_LENGTH
+            && !Number.isNaN(Date.parse(resetAtRaw))
+            ? new Date(resetAtRaw)
+            : null;
+        windows.push({
+            label,
+            percent,
+            resetAt,
+        });
+    }
+    return windows;
 }
 /**
  * Strips redundant context-window size suffixes from model display names.

@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createDebug } from './debug.js';
 
+const debug = createDebug('git');
 const execFileAsync = promisify(execFile);
 
 export interface LineDiff {
@@ -31,19 +33,19 @@ export interface GitStatus {
   fileStats?: FileStats;
   lineDiff?: LineDiff;
   branchUrl?: string;
+  /** Which VCS produced this status. Omitted (undefined) means 'git'. */
+  vcs?: 'git' | 'jj';
+  /** jj-native: true when the working-copy commit has an unresolved conflict. */
+  conflict?: boolean;
 }
 
 export async function getGitBranch(cwd?: string): Promise<string | null> {
   if (!cwd) return null;
 
   try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['rev-parse', '--abbrev-ref', 'HEAD'],
-      { cwd, timeout: 1000, encoding: 'utf8', windowsHide: true }
-    );
-    return stdout.trim() || null;
-  } catch {
+    return await resolveGitRef(cwd);
+  } catch (err) {
+    debug('Failed to get git branch:', err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -53,12 +55,7 @@ export async function getGitStatus(cwd?: string): Promise<GitStatus | null> {
 
   try {
     // Get branch name
-    const { stdout: branchOut } = await execFileAsync(
-      'git',
-      ['rev-parse', '--abbrev-ref', 'HEAD'],
-      { cwd, timeout: 1000, encoding: 'utf8', windowsHide: true }
-    );
-    const branch = branchOut.trim();
+    const branch = await resolveGitRef(cwd);
     if (!branch) return null;
 
     // Check for dirty state and parse file stats
@@ -76,8 +73,8 @@ export async function getGitStatus(cwd?: string): Promise<GitStatus | null> {
       if (isDirty) {
         fileStats = parseFileStats(trimmed);
       }
-    } catch {
-      // Ignore errors, assume clean
+    } catch (err) {
+      debug('Failed to get git status:', err instanceof Error ? err.message : err);
     }
 
     // Get per-file and total line diffs
@@ -94,8 +91,8 @@ export async function getGitStatus(cwd?: string): Promise<GitStatus | null> {
         if (fileStats) {
           applyLineDiffsToFiles(fileStats.trackedFiles, perFileDiff);
         }
-      } catch {
-        // Ignore errors
+      } catch (err) {
+        debug('Failed to get line diff:', err instanceof Error ? err.message : err);
       }
     }
 
@@ -113,8 +110,8 @@ export async function getGitStatus(cwd?: string): Promise<GitStatus | null> {
         behind = parseInt(parts[0], 10) || 0;
         ahead = parseInt(parts[1], 10) || 0;
       }
-    } catch {
-      // No upstream or error, keep 0/0
+    } catch (err) {
+      debug('Failed to get ahead/behind (no upstream?):', err instanceof Error ? err.message : err);
     }
 
     // Build GitHub branch URL from remote
@@ -131,16 +128,62 @@ export async function getGitStatus(cwd?: string): Promise<GitStatus | null> {
         .replace(/^ssh:\/\/git@github\.com\//, 'https://github.com/')
         .replace(/\.git$/, '');
       if (httpsBase.startsWith('https://github.com/')) {
-        branchUrl = `${httpsBase}/tree/${encodeURIComponent(branch)}`;
+        branchUrl = buildGitHubRefUrl(httpsBase, branch);
       }
-    } catch {
-      // No remote or not GitHub
+    } catch (err) {
+      debug('Failed to get remote URL:', err instanceof Error ? err.message : err);
     }
 
     return { branch, isDirty, ahead, behind, fileStats, lineDiff, branchUrl };
-  } catch {
+  } catch (err) {
+    debug('getGitStatus failed:', err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+async function resolveGitRef(cwd: string): Promise<string | null> {
+  const { stdout: branchOut } = await execFileAsync(
+    'git',
+    ['rev-parse', '--abbrev-ref', 'HEAD'],
+    { cwd, timeout: 1000, encoding: 'utf8', windowsHide: true }
+  );
+  const branch = branchOut.trim();
+  if (branch && branch !== 'HEAD') {
+    return branch;
+  }
+
+  try {
+    const { stdout: tagOut } = await execFileAsync(
+      'git',
+      ['describe', '--tags', '--exact-match', 'HEAD'],
+      { cwd, timeout: 1000, encoding: 'utf8', windowsHide: true }
+    );
+    const tag = tagOut.trim();
+    if (tag) return tag;
+  } catch {
+    // Detached commits often are not tagged; fall back to a short commit id.
+  }
+
+  const { stdout: shortShaOut } = await execFileAsync(
+    'git',
+    ['rev-parse', '--short', 'HEAD'],
+    { cwd, timeout: 1000, encoding: 'utf8', windowsHide: true }
+  );
+  const shortSha = shortShaOut.trim();
+  return shortSha ? `detached:${shortSha}` : null;
+}
+
+function encodeGitHubRef(ref: string): string {
+  return ref.split('/').map(encodeURIComponent).join('/');
+}
+
+function buildGitHubRefUrl(httpsBase: string, ref: string): string {
+  const detachedMatch = ref.match(/^detached:([0-9a-f]+)$/);
+  if (detachedMatch) {
+    return `${httpsBase}/commit/${detachedMatch[1]}`;
+  }
+
+  return `${httpsBase}/tree/${encodeGitHubRef(ref)}`;
 }
 
 /**

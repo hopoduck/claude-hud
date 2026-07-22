@@ -6,6 +6,7 @@ const CACHE_READ_MULTIPLIER = 0.1;
 // model lines (Haiku 4.x differs from Haiku 3.5) must come before any broader
 // fallback patterns to avoid silent under-pricing.
 const ANTHROPIC_MODEL_PRICING = [
+    { pattern: /\bopus 4 (?:[5-9]|\d{2,})\b/i, pricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 25 } },
     { pattern: /\bopus 4(?: \d+)?\b/i, pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 } },
     { pattern: /\bsonnet 4(?: \d+)?\b/i, pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
     { pattern: /\bsonnet 3 7\b/i, pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
@@ -54,14 +55,11 @@ function getAnthropicPricing(stdin) {
     }
     return null;
 }
-export function estimateSessionCost(stdin, sessionTokens) {
+export function estimateSessionCost(stdin, sessionTokens, options) {
     if (!sessionTokens) {
         return null;
     }
-    if (isBedrockModelId(stdin.model?.id)) {
-        return null;
-    }
-    if (isVertexModelId(stdin.model?.id)) {
+    if (!options?.allowRoutedCost && (isBedrockModelId(stdin.model?.id) || isVertexModelId(stdin.model?.id))) {
         return null;
     }
     const pricing = getAnthropicPricing(stdin);
@@ -87,28 +85,28 @@ export function estimateSessionCost(stdin, sessionTokens) {
         outputUsd,
     };
 }
-function getNativeCostUsd(stdin) {
+function getNativeCostUsd(stdin, options) {
     const nativeCost = stdin.cost?.total_cost_usd;
     if (typeof nativeCost !== 'number' || !Number.isFinite(nativeCost)) {
         return null;
     }
-    if (isBedrockModelId(stdin.model?.id)) {
-        return null;
-    }
-    if (isVertexModelId(stdin.model?.id)) {
-        return null;
+    if (isBedrockModelId(stdin.model?.id) || isVertexModelId(stdin.model?.id)) {
+        // Routed native billing reads $0.00 until the first response; use it only when opted in and positive.
+        if (!options?.allowRoutedCost || nativeCost <= 0) {
+            return null;
+        }
     }
     return nativeCost;
 }
-export function resolveSessionCost(stdin, sessionTokens) {
-    const nativeCostUsd = getNativeCostUsd(stdin);
+export function resolveSessionCost(stdin, sessionTokens, options) {
+    const nativeCostUsd = getNativeCostUsd(stdin, options);
     if (nativeCostUsd !== null) {
         return {
             totalUsd: nativeCostUsd,
             source: 'native',
         };
     }
-    const estimate = estimateSessionCost(stdin, sessionTokens);
+    const estimate = estimateSessionCost(stdin, sessionTokens, options);
     if (!estimate) {
         return null;
     }

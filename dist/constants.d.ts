@@ -8,5 +8,4 @@
  * report mismatches in future Claude Code versions.
  */
 export declare const AUTOCOMPACT_BUFFER_PERCENT = 0.165;
-export declare const AUTOCOMPACT_BUFFER_TOKENS = 33000;
 //# sourceMappingURL=constants.d.ts.map

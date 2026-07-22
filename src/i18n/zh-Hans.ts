@@ -11,9 +11,11 @@ export const zhHans: Messages = {
   "label.hooks": "钩子",
   "label.estimatedCost": "估算",
   "label.cost": "费用",
-  "label.tokens": "令牌",
+  "label.tokens": "词元",
   "label.sessionStarted": "开始",
   "label.lastReply": "上次回复",
+  "label.advisor": "顾问",
+  "label.compactions": "压缩次数",
 
   // Status
   "status.limitReached": "已达上限",
@@ -23,14 +25,14 @@ export const zhHans: Messages = {
   // Format
   "format.resets": "重置于",
   "format.resetsIn": "重置剩余",
-  "format.at": "",
+  "format.absoluteTime": "{time}",
   "format.in": "输入",
   "format.cache": "缓存",
   "format.out": "输出",
-  "format.tok": "令牌",
+  "format.tok": "词元",
   "format.tokPerSec": "tok/s",
   "format.justNow": "刚刚",
-  "format.ago": "前",
+  "format.relativeTime": "{value} 前",
 
   // Init
   "init.initializing": "[claude-hud] 正在初始化...",

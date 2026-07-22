@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _setCreateReadStreamForTests, parseTranscript } from '../dist/transcript.js';
+import { TRANSCRIPT_MODEL_MAX_LEN } from '../dist/model-source.js';
 import { countConfigs } from '../dist/config-reader.js';
-import { getContextPercent, getBufferedPercent, getModelName, getProviderLabel, getUsageFromStdin, isBedrockModelId, stripContextSuffix, formatModelName } from '../dist/stdin.js';
+import { getContextPercent, getBufferedPercent, getModelName, getProviderLabel, getUsageFromStdin, isBedrockModelId, stripContextSuffix, formatModelName, resolveModelName } from '../dist/stdin.js';
 import { estimateSessionCost, resolveSessionCost, formatUsd } from '../dist/cost.js';
 import * as fs from 'node:fs';
 
@@ -375,6 +376,42 @@ test('formatModelName override replaces model name entirely', () => {
   assert.equal(formatModelName('Opus 4.6', 'full', ''), 'Opus 4.6');
 });
 
+test('resolveModelName preserves stdin as the default source', () => {
+  const stdin = { model: { display_name: 'Claude Opus' } };
+  const transcript = { lastAssistantModel: 'glm-5.2' };
+
+  assert.equal(resolveModelName(stdin, transcript), 'Claude Opus');
+  assert.equal(resolveModelName(stdin, transcript, 'stdin'), 'Claude Opus');
+});
+
+test('resolveModelName supports opt-in auto and transcript sources', () => {
+  const stdin = { model: { display_name: 'Claude Opus' } };
+
+  assert.equal(resolveModelName(stdin, { lastAssistantModel: 'glm-5.2' }, 'auto'), 'glm-5.2');
+  assert.equal(resolveModelName(stdin, { lastAssistantModel: 'claude-sonnet-4-6' }, 'auto'), 'Claude Opus');
+  assert.equal(resolveModelName(stdin, { lastAssistantModel: 'claude-sonnet-4-6' }, 'transcript'), 'claude-sonnet-4-6');
+});
+
+test('resolveModelName falls back to stdin when the transcript model is missing', () => {
+  const stdin = { model: { display_name: 'Claude Opus' } };
+
+  assert.equal(resolveModelName(stdin, undefined, 'auto'), 'Claude Opus');
+  assert.equal(resolveModelName(stdin, {}, 'transcript'), 'Claude Opus');
+});
+
+test('resolveModelName sanitizes and caps transcript models at the render boundary', () => {
+  const malicious = `proxy-\x1b[31mred\x1b[0m\x1b]8;;https://evil.test\x07link\x1b]8;;\x07\u202E${'x'.repeat(100)}`;
+  const resolved = resolveModelName(
+    { model: { display_name: 'Claude Opus' } },
+    { lastAssistantModel: malicious },
+    'transcript',
+  );
+
+  assert.ok(resolved.startsWith('proxy-redlink'));
+  assert.equal(resolved.length, 80);
+  assert.doesNotMatch(resolved, /[\x1b\u202E]/u);
+});
+
 test('bedrock model detection recognizes bedrock ids', () => {
   assert.ok(isBedrockModelId('anthropic.claude-3-5-sonnet-20240620-v1:0'));
   assert.ok(isBedrockModelId('eu.anthropic.claude-opus-4-5-20251101-v1:0'));
@@ -421,7 +458,7 @@ test('resolveSessionCost falls back to transcript estimation when native cost is
 
   assert.ok(cost, 'expected fallback estimate');
   assert.equal(cost?.source, 'estimate');
-  assert.equal(formatUsd(cost?.totalUsd ?? 0), '$5.47');
+  assert.equal(formatUsd(cost?.totalUsd ?? 0), '$1.82');
 });
 
 test('resolveSessionCost ignores native cost for provider-routed sessions', () => {
@@ -505,6 +542,48 @@ test('estimateSessionCost prices Claude Haiku 4.5 (and future 4.x minors)', () =
   assert.equal(formatUsd(haiku35.totalUsd), '$1.20');
 });
 
+test('estimateSessionCost prices newer Opus 4 models below the Opus 4.0 and 4.1 fallback', () => {
+  const tokens = {
+    inputTokens: 1_000_000,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    outputTokens: 100_000,
+  };
+
+  const opus45 = estimateSessionCost({ model: { display_name: 'Claude Opus 4.5' } }, tokens);
+  assert.ok(opus45, 'expected non-null estimate for Claude Opus 4.5');
+  assert.equal(formatUsd(opus45.totalUsd), '$7.50');
+
+  const opus46 = estimateSessionCost({ model: { display_name: 'Claude Opus 4.6' } }, tokens);
+  assert.ok(opus46, 'expected non-null estimate for Claude Opus 4.6');
+  assert.equal(formatUsd(opus46.totalUsd), '$7.50');
+
+  // Tests that Bedrock-style strings in display_name are normalized correctly.
+  // Real Bedrock sessions set model.id (triggering isBedrockModelId → null),
+  // so this exercises the regex normalization path, not real Bedrock pricing.
+  const bedrockOpus46 = estimateSessionCost({ model: { display_name: 'eu.anthropic.claude-opus-4-6-v1:0' } }, tokens);
+  assert.ok(bedrockOpus46, 'expected model ID normalization to match Claude Opus 4.6');
+  assert.equal(formatUsd(bedrockOpus46.totalUsd), '$7.50');
+
+  const opus41 = estimateSessionCost({ model: { display_name: 'Claude Opus 4.1' } }, tokens);
+  assert.ok(opus41, 'expected non-null estimate for Claude Opus 4.1');
+  assert.equal(formatUsd(opus41.totalUsd), '$22.50');
+});
+
+test('estimateSessionCost returns null for real Bedrock sessions with model.id set', () => {
+  const tokens = {
+    inputTokens: 1_000_000,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    outputTokens: 100_000,
+  };
+
+  const result = estimateSessionCost(
+    { model: { id: 'eu.anthropic.claude-opus-4-5-v1:0', display_name: 'Claude Opus 4.5' } },
+    tokens,
+  );
+  assert.equal(result, null, 'Bedrock sessions (model.id contains anthropic.claude-) should skip estimation');
+});
 
 test('parseTranscript aggregates tools, agents, and todos', async () => {
   const fixturePath = fileURLToPath(new URL('./fixtures/transcript-basic.jsonl', import.meta.url));
@@ -566,10 +645,22 @@ test('parseTranscript accumulates session token usage from assistant messages', 
   }
 });
 
-test('parseTranscript counts adjacent duplicate assistant usage once', async () => {
+test('parseTranscript sanitizes and caps assistant model IDs at ingestion', async () => {
+  const malicious = `proxy-\x1b[31mred\x1b[0m\x1b]8;;https://evil.test\x07link\x1b]8;;\x07\u202E${'x'.repeat(100)}`;
+  const result = await parseTempTranscript('transcript-model-sanitization.jsonl', [
+    { type: 'assistant', message: { model: malicious } },
+  ]);
+
+  assert.ok(result.lastAssistantModel?.startsWith('proxy-redlink'));
+  assert.equal(result.lastAssistantModel?.length, 80);
+  assert.doesNotMatch(result.lastAssistantModel ?? '', /[\x1b\u202E]/u);
+});
+
+test('parseTranscript deduplicates adjacent duplicate assistant usage by message.id', async () => {
   const usageEntry = {
     type: 'assistant',
     message: {
+      id: 'msg-001',
       usage: {
         input_tokens: 100,
         output_tokens: 25,
@@ -592,10 +683,11 @@ test('parseTranscript counts adjacent duplicate assistant usage once', async () 
   });
 });
 
-test('parseTranscript counts identical assistant usage separated by another line twice', async () => {
+test('parseTranscript deduplicates non-consecutive duplicate assistant usage by message.id', async () => {
   const usageEntry = {
     type: 'assistant',
     message: {
+      id: 'msg-002',
       usage: {
         input_tokens: 100,
         output_tokens: 25,
@@ -612,11 +704,115 @@ test('parseTranscript counts identical assistant usage separated by another line
   ]);
 
   assert.deepEqual(result.sessionTokens, {
+    inputTokens: 100,
+    outputTokens: 25,
+    cacheCreationTokens: 10,
+    cacheReadTokens: 5,
+  });
+});
+
+test('parseTranscript counts different message IDs with identical usage', async () => {
+  const usage = {
+    input_tokens: 100,
+    output_tokens: 25,
+    cache_creation_input_tokens: 10,
+    cache_read_input_tokens: 5,
+  };
+
+  const result = await parseTempTranscript('session-tokens-distinct-ids.jsonl', [
+    { type: 'assistant', message: { id: 'msg-a', usage } },
+    { type: 'assistant', message: { id: 'msg-b', usage } },
+  ]);
+
+  assert.deepEqual(result.sessionTokens, {
     inputTokens: 200,
     outputTokens: 50,
     cacheCreationTokens: 20,
     cacheReadTokens: 10,
   });
+});
+
+test('parseTranscript deduplicates adjacent idless usage with the legacy fingerprint fallback', async () => {
+  const entry = {
+    type: 'assistant',
+    message: {
+      usage: {
+        input_tokens: 100,
+        output_tokens: 25,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 5,
+      },
+    },
+  };
+
+  const result = await parseTempTranscript('session-tokens-idless-adjacent.jsonl', [entry, entry]);
+
+  assert.deepEqual(result.sessionTokens, {
+    inputTokens: 100,
+    outputTokens: 25,
+    cacheCreationTokens: 10,
+    cacheReadTokens: 5,
+  });
+});
+
+test('parseTranscript treats malformed and oversized message IDs as idless', async () => {
+  const usage = {
+    input_tokens: 100,
+    output_tokens: 25,
+    cache_creation_input_tokens: 10,
+    cache_read_input_tokens: 5,
+  };
+  const objectIdEntry = {
+    type: 'assistant',
+    message: { id: { nested: 'payload' }, usage },
+  };
+  const oversizedIdEntry = {
+    type: 'assistant',
+    message: { id: 'x'.repeat(129), usage },
+  };
+  const nonStringIdEntry = {
+    type: 'assistant',
+    message: { id: 42, usage },
+  };
+
+  const result = await parseTempTranscript('session-tokens-invalid-ids.jsonl', [
+    objectIdEntry,
+    objectIdEntry,
+    { type: 'user', timestamp: '2024-01-01T00:00:01.000Z' },
+    oversizedIdEntry,
+    oversizedIdEntry,
+    { type: 'user', timestamp: '2024-01-01T00:00:02.000Z' },
+    nonStringIdEntry,
+    nonStringIdEntry,
+  ]);
+
+  assert.deepEqual(result.sessionTokens, {
+    inputTokens: 300,
+    outputTokens: 75,
+    cacheCreationTokens: 30,
+    cacheReadTokens: 15,
+  });
+});
+
+test('parseTranscript bounds retained message IDs', async () => {
+  const entries = Array.from({ length: 4097 }, (_, index) => ({
+    type: 'assistant',
+    message: {
+      id: `msg-${index}`,
+      usage: { input_tokens: 1 },
+    },
+  }));
+  entries.push({
+    type: 'assistant',
+    message: {
+      id: 'msg-0',
+      usage: { input_tokens: 1 },
+    },
+  });
+
+  const result = await parseTempTranscript('session-tokens-bounded-message-ids.jsonl', entries);
+
+  assert.equal(result.sessionTokens?.inputTokens, 4098);
 });
 
 test('parseTranscript records the most recent compact_boundary and postTokens', async () => {
@@ -646,6 +842,7 @@ test('parseTranscript records the most recent compact_boundary and postTokens', 
     const result = await parseTranscript(filePath);
     assert.equal(result.lastCompactBoundaryAt?.toISOString(), '2024-01-01T00:10:00.000Z');
     assert.equal(result.lastCompactPostTokens, 12345);
+    assert.equal(result.compactionCount, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -675,6 +872,7 @@ test('parseTranscript ignores compact_boundary entries without a valid timestamp
     const result = await parseTranscript(filePath);
     assert.equal(result.lastCompactBoundaryAt, undefined);
     assert.equal(result.lastCompactPostTokens, undefined);
+    assert.equal(result.compactionCount, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -698,6 +896,90 @@ test('parseTranscript captures the last assistant response timestamp', async () 
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+const ULTRA_ENTER = { type: 'attachment', attachment: { type: 'ultra_effort_enter' } };
+const ULTRA_EXIT = { type: 'attachment', attachment: { type: 'ultra_effort_exit' } };
+const effortCmd = (level) => ({
+  type: 'user',
+  message: { content: `<local-command-stdout>Set effort level to ${level} (this session only): x</local-command-stdout>` },
+});
+
+test('parseTranscript reads ultracode attachment and /effort signals from a realistic transcript fixture', async () => {
+  const fixturePath = fileURLToPath(new URL('./fixtures/transcript-ultracode.jsonl', import.meta.url));
+  const entries = (await readFile(fixturePath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map(line => JSON.parse(line));
+
+  const afterAttachment = await parseTempTranscript('ultra-fixture-enter.jsonl', entries.slice(0, 1));
+  assert.equal(afterAttachment.ultracodeActive, true);
+
+  const afterXhigh = await parseTempTranscript('ultra-fixture-xhigh.jsonl', entries.slice(0, 2));
+  assert.equal(afterXhigh.ultracodeActive, false);
+
+  const afterUltracode = await parseTempTranscript('ultra-fixture-active.jsonl', entries);
+  assert.equal(afterUltracode.ultracodeActive, true);
+});
+
+test('parseTranscript: no ultracode signal leaves ultracodeActive undefined', async () => {
+  const result = await parseTempTranscript('ultra-none.jsonl', [{ type: 'user', message: { content: 'hi' } }]);
+  assert.equal(result.ultracodeActive, undefined);
+});
+
+test('parseTranscript: ultracode active from an enter attachment alone', async () => {
+  const result = await parseTempTranscript('ultra-enter-only.jsonl', [ULTRA_ENTER]);
+  assert.equal(result.ultracodeActive, true);
+});
+
+test('parseTranscript: enter then exit attachment clears ultracode', async () => {
+  const result = await parseTempTranscript('ultra-exit.jsonl', [ULTRA_ENTER, ULTRA_EXIT]);
+  assert.equal(result.ultracodeActive, false);
+});
+
+test('parseTranscript: runtime /effort ultracode is active', async () => {
+  const result = await parseTempTranscript('ultra-cmd.jsonl', [effortCmd('high'), effortCmd('ultracode')]);
+  assert.equal(result.ultracodeActive, true);
+});
+
+test('parseTranscript: /effort xhigh clears a stale enter marker before the exit attachment lands (regression)', async () => {
+  // The exit attachment lags a turn behind a runtime /effort change, so the
+  // immediate /effort output must clear the label during that lag window.
+  const result = await parseTempTranscript('ultra-lag.jsonl', [ULTRA_ENTER, effortCmd('xhigh')]);
+  assert.equal(result.ultracodeActive, false);
+});
+
+test('parseTranscript: the latest effort signal wins regardless of kind', async () => {
+  const exitThenCmd = await parseTempTranscript('ultra-order-a.jsonl', [ULTRA_EXIT, effortCmd('ultracode')]);
+  assert.equal(exitThenCmd.ultracodeActive, true);
+  const cmdThenExit = await parseTempTranscript('ultra-order-b.jsonl', [effortCmd('ultracode'), ULTRA_EXIT]);
+  assert.equal(cmdThenExit.ultracodeActive, false);
+});
+
+test('parseTranscript: a quoted /effort phrase mid-message does not flip ultracode (regression)', async () => {
+  // Prose that merely quotes the command output (tag not at the start of the
+  // record) must not be mistaken for a real /effort record.
+  const quoted = {
+    type: 'user',
+    message: { content: 'I will run /effort. <local-command-stdout>Set effort level to ultracode (this session only): x</local-command-stdout>' },
+  };
+  const result = await parseTempTranscript('ultra-quoted.jsonl', [ULTRA_EXIT, quoted]);
+  assert.equal(result.ultracodeActive, false);
+});
+
+test('parseTranscript: marker text in prose does not trigger ultracode (pollution guard)', async () => {
+  // Ordinary conversation arrives as an array of text blocks, never a raw
+  // string, so prose mentioning the marker must not match.
+  const prose = await parseTempTranscript('ultra-prose.jsonl', [
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Run /effort then "Set effort level to ultracode".' }] } },
+  ]);
+  assert.equal(prose.ultracodeActive, undefined);
+  // A string that merely contains the command wrapper (not at the start) must
+  // not match either — the regex is anchored to the start of the stdout block.
+  const quoted = await parseTempTranscript('ultra-quoted.jsonl', [
+    { type: 'user', message: { content: 'I pasted: <local-command-stdout>Set effort level to ultracode</local-command-stdout>' } },
+  ]);
+  assert.equal(quoted.ultracodeActive, undefined);
 });
 
 test('parseTranscript ignores malformed session token values', async () => {
@@ -942,6 +1224,42 @@ test('parseTranscript extracts tool targets for common tools', async () => {
     assert.equal(targets.get('Bash'), 'echo hello world');
     assert.equal(targets.get('Glob'), '**/*.ts');
     assert.equal(targets.get('Grep'), 'render');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseTranscript collapses multiline Bash targets before truncating', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-'));
+  const filePath = path.join(dir, 'bash-multiline.jsonl');
+  const lines = [
+    JSON.stringify({
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tool-1',
+            name: 'Bash',
+            input: { command: 'ID=foo\nccusage session --json\t| jq .total' },
+          },
+          {
+            type: 'tool_use',
+            id: 'tool-2',
+            name: 'Bash',
+            input: { command: ' \n\t ' },
+          },
+        ],
+      },
+    }),
+  ];
+
+  await writeFile(filePath, lines.join('\n'), 'utf8');
+
+  try {
+    const result = await parseTranscript(filePath);
+    assert.equal(result.tools.length, 2);
+    assert.equal(result.tools[0].target, 'ID=foo ccusage session --json...');
+    assert.equal(result.tools[1].target, undefined);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1294,6 +1612,11 @@ test('parseTranscript reuses cached data when transcript state is unchanged', as
   const initialLine = `${JSON.stringify({
     timestamp: '2024-01-01T00:00:00.000Z',
     message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: '/tmp/original.txt' } }] },
+  })}\n${JSON.stringify({
+    type: 'system',
+    subtype: 'compact_boundary',
+    timestamp: '2024-01-01T00:05:00.000Z',
+    compactMetadata: { trigger: 'auto', preTokens: 170574, postTokens: 7679 },
   })}\n`;
 
   process.env.CLAUDE_CONFIG_DIR = configDir;
@@ -1304,6 +1627,7 @@ test('parseTranscript reuses cached data when transcript state is unchanged', as
     const first = await parseTranscript(transcriptPath);
     assert.equal(first.tools.length, 1);
     assert.equal(first.tools[0].target, '/tmp/original.txt');
+    assert.equal(first.compactionCount, 1);
 
     const stat = fs.statSync(transcriptPath);
     const corrupted = '#'.repeat(stat.size);
@@ -1313,6 +1637,40 @@ test('parseTranscript reuses cached data when transcript state is unchanged', as
     const second = await parseTranscript(transcriptPath);
     assert.equal(second.tools.length, 1);
     assert.equal(second.tools[0].target, '/tmp/original.txt');
+    assert.equal(second.compactionCount, 1);
+  } finally {
+    restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('parseTranscript sanitizes and caps a poisoned cached model ID', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'claude-hud-transcript-cache-'));
+  const configDir = path.join(dir, '.claude-test');
+  const transcriptPath = path.join(dir, 'cache-model-poison.jsonl');
+  const originalConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  const line = `${JSON.stringify({
+    type: 'assistant',
+    message: { model: 'safe-model' },
+  })}\n`;
+  const malicious = `cache-\x1b[31mred\x1b[0m\x1b]8;;https://evil.test\x07link\x1b]8;;\x07\u202E${'x'.repeat(100)}`;
+
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  await writeFile(transcriptPath, line, 'utf8');
+
+  try {
+    const first = await parseTranscript(transcriptPath);
+    assert.equal(first.lastAssistantModel, 'safe-model');
+
+    const cachePath = await getTranscriptCacheFile(configDir);
+    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    cache.data.lastAssistantModel = malicious;
+    await writeFile(cachePath, JSON.stringify(cache), 'utf8');
+
+    const second = await parseTranscript(transcriptPath);
+    assert.ok(second.lastAssistantModel?.startsWith('cache-redlink'));
+    assert.equal(second.lastAssistantModel?.length, 80);
+    assert.doesNotMatch(second.lastAssistantModel ?? '', /[\x1b\u202E]/u);
   } finally {
     restoreEnvVar('CLAUDE_CONFIG_DIR', originalConfigDir);
     await rm(dir, { recursive: true, force: true });
@@ -1735,6 +2093,63 @@ test('countConfigs tolerates rule directory read errors', async () => {
     fs.chmodSync(rulesDir, 0o755);
     process.env.HOME = originalHome;
     await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('countConfigs follows symlinked rule files and directories safely', async () => {
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-project-'));
+  const sharedDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-rules-'));
+  const originalHome = process.env.HOME;
+  process.env.HOME = homeDir;
+
+  try {
+    const rulesDir = path.join(projectDir, '.claude', 'rules');
+    await mkdir(rulesDir, { recursive: true });
+    await writeFile(path.join(sharedDir, 'shared.md'), '# shared', 'utf8');
+    await writeFile(path.join(sharedDir, 'direct.md'), '# direct', 'utf8');
+    fs.symlinkSync(sharedDir, path.join(rulesDir, 'pack'), 'dir');
+    fs.symlinkSync(path.join(sharedDir, 'direct.md'), path.join(rulesDir, 'linked.md'), 'file');
+
+    const counts = await countConfigs(projectDir);
+    assert.equal(counts.rulesCount, 2);
+
+    const statBefore = fs.statSync(sharedDir);
+    await writeFile(path.join(sharedDir, 'added.md'), '# added', 'utf8');
+    fs.utimesSync(sharedDir, statBefore.atimeMs / 1000 + 1, statBefore.mtimeMs / 1000 + 1);
+    const updated = await countConfigs(projectDir);
+    assert.equal(updated.rulesCount, 3, 'cache should invalidate when a symlink target changes');
+  } finally {
+    process.env.HOME = originalHome;
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(sharedDir, { recursive: true, force: true });
+  }
+});
+
+test('countConfigs skips dangling links, cycles, and duplicate symlink targets', async () => {
+  const homeDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-home-'));
+  const projectDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-project-'));
+  const sharedDir = await mkdtemp(path.join(tmpdir(), 'claude-hud-rules-'));
+  const originalHome = process.env.HOME;
+  process.env.HOME = homeDir;
+
+  try {
+    const rulesDir = path.join(projectDir, '.claude', 'rules');
+    await mkdir(rulesDir, { recursive: true });
+    await writeFile(path.join(sharedDir, 'one.md'), '# one', 'utf8');
+    fs.symlinkSync(sharedDir, path.join(rulesDir, 'pack-a'), 'dir');
+    fs.symlinkSync(sharedDir, path.join(rulesDir, 'pack-b'), 'dir');
+    fs.symlinkSync(rulesDir, path.join(sharedDir, 'cycle'), 'dir');
+    fs.symlinkSync(path.join(sharedDir, 'missing.md'), path.join(rulesDir, 'dangling.md'), 'file');
+
+    const counts = await countConfigs(projectDir);
+    assert.equal(counts.rulesCount, 1);
+  } finally {
+    process.env.HOME = originalHome;
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(projectDir, { recursive: true, force: true });
+    await rm(sharedDir, { recursive: true, force: true });
   }
 });
 
@@ -2253,4 +2668,213 @@ test('countConfigs cache: works without cwd (user scope only)', async () => {
     process.env.HOME = originalHome;
     await rm(homeDir, { recursive: true, force: true });
   }
+});
+
+test('parseTranscript captures advisorModel from assistant records', async () => {
+  const result = await parseTempTranscript('advisor.jsonl', [
+    { type: 'user', slug: 'auto-slug' },
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:03:32.094Z',
+      advisorModel: 'claude-opus-4-7',
+      message: { content: [] },
+    },
+  ]);
+
+  assert.equal(result.advisorModel, 'claude-opus-4-7');
+});
+
+test('parseTranscript returns undefined advisorModel when not present', async () => {
+  const result = await parseTempTranscript('no-advisor.jsonl', [
+    { type: 'user', slug: 'auto-slug' },
+    { type: 'assistant', timestamp: '2026-05-28T09:03:32.094Z', message: { content: [] } },
+  ]);
+
+  assert.equal(result.advisorModel, undefined);
+});
+
+test('parseTranscript prefers the most recent advisorModel value', async () => {
+  const result = await parseTempTranscript('advisor-latest.jsonl', [
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: 'claude-sonnet-4-6',
+      message: { content: [] },
+    },
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:05:00.000Z',
+      advisorModel: 'claude-opus-4-7',
+      message: { content: [] },
+    },
+  ]);
+
+  assert.equal(result.advisorModel, 'claude-opus-4-7');
+});
+
+test('parseTranscript ignores empty advisorModel strings', async () => {
+  const result = await parseTempTranscript('advisor-empty.jsonl', [
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: '',
+      message: { content: [] },
+    },
+  ]);
+
+  assert.equal(result.advisorModel, undefined);
+});
+
+test('parseTranscript ignores advisorModel on non-assistant records', async () => {
+  // Per Claude Code's documented schema the field is only meaningful on
+  // assistant records; reading it from user / custom-title / system records
+  // would let a malformed log poison the value.
+  const result = await parseTempTranscript('advisor-non-assistant.jsonl', [
+    {
+      type: 'user',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: 'claude-sonnet-4-6',
+    },
+    {
+      type: 'custom-title',
+      customTitle: 'My Session',
+      advisorModel: 'claude-haiku-4-5',
+    },
+    {
+      type: 'system',
+      subtype: 'compact_boundary',
+      advisorModel: 'claude-haiku-4-5',
+    },
+  ]);
+
+  assert.equal(result.advisorModel, undefined);
+});
+
+test('parseTranscript caps oversized advisorModel at the transcript length limit', async () => {
+  const result = await parseTempTranscript('advisor-oversized.jsonl', [
+    {
+      type: 'assistant',
+      timestamp: '2026-05-28T09:00:00.000Z',
+      advisorModel: 'claude-' + 'x'.repeat(500),
+      message: { content: [] },
+    },
+  ]);
+
+  assert.ok(
+    typeof result.advisorModel === 'string' && result.advisorModel.length <= 64,
+    `expected capped advisorModel, got length ${result.advisorModel?.length}`,
+  );
+});
+
+function agentLaunchEntries(toolUseId, input, toolUseResult) {
+  const entries = [
+    {
+      timestamp: '2026-07-19T10:00:00.000Z',
+      message: {
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'Agent', input },
+        ],
+      },
+    },
+    {
+      timestamp: '2026-07-19T10:00:00.040Z',
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: 'launched' },
+        ],
+      },
+    },
+  ];
+  if (toolUseResult) {
+    entries[1].toolUseResult = toolUseResult;
+  }
+  return entries;
+}
+
+test('parseTranscript reads the agent model from toolUseResult.resolvedModel', async () => {
+  const result = await parseTempTranscript(
+    'agent-resolved-model.jsonl',
+    agentLaunchEntries(
+      'agent-resolved',
+      { subagent_type: 'general-purpose', description: 'inherits the session model' },
+      { status: 'async_launched', isAsync: true, resolvedModel: 'claude-sonnet-5[1m]' },
+    ),
+  );
+
+  assert.equal(result.agents.length, 1);
+  assert.equal(result.agents[0]?.model, 'claude-sonnet-5[1m]');
+});
+
+test('parseTranscript prefers resolvedModel over the model passed by the caller', async () => {
+  const result = await parseTempTranscript(
+    'agent-resolved-wins.jsonl',
+    agentLaunchEntries(
+      'agent-both',
+      { subagent_type: 'Explore', model: 'opus' },
+      { status: 'completed', resolvedModel: 'claude-opus-4-8[1m]' },
+    ),
+  );
+
+  assert.equal(result.agents[0]?.model, 'claude-opus-4-8[1m]');
+});
+
+test('parseTranscript keeps the caller model when no resolvedModel is reported', async () => {
+  const result = await parseTempTranscript(
+    'agent-no-resolved.jsonl',
+    agentLaunchEntries('agent-alias', { subagent_type: 'Explore', model: 'haiku' }, null),
+  );
+
+  assert.equal(result.agents[0]?.model, 'haiku');
+});
+
+test('parseTranscript leaves the agent model unset when neither source reports one', async () => {
+  const result = await parseTempTranscript(
+    'agent-no-model.jsonl',
+    agentLaunchEntries('agent-none', { subagent_type: 'Explore' }, { status: 'completed' }),
+  );
+
+  assert.equal(result.agents[0]?.model, undefined);
+});
+
+test('parseTranscript caps an oversized resolvedModel at the model length limit', async () => {
+  const result = await parseTempTranscript(
+    'agent-oversized-model.jsonl',
+    agentLaunchEntries(
+      'agent-oversized',
+      { subagent_type: 'Explore' },
+      { status: 'completed', resolvedModel: 'claude-' + 'x'.repeat(500) },
+    ),
+  );
+
+  assert.ok(
+    typeof result.agents[0]?.model === 'string'
+      && result.agents[0].model.length <= TRANSCRIPT_MODEL_MAX_LEN,
+    `expected capped agent model, got length ${result.agents[0]?.model?.length}`,
+  );
+});
+
+test('parseTranscript strips terminal escapes from resolvedModel', async () => {
+  const result = await parseTempTranscript(
+    'agent-escape-model.jsonl',
+    agentLaunchEntries(
+      'agent-escape',
+      { subagent_type: 'Explore' },
+      { status: 'completed', resolvedModel: '\u001b[31mclaude-opus-4-8\u001b[0m' },
+    ),
+  );
+
+  assert.equal(result.agents[0]?.model, 'claude-opus-4-8');
+});
+
+test('parseTranscript ignores a non-string resolvedModel', async () => {
+  const result = await parseTempTranscript(
+    'agent-bad-model.jsonl',
+    agentLaunchEntries(
+      'agent-bad',
+      { subagent_type: 'Explore', model: 'sonnet' },
+      { status: 'completed', resolvedModel: { id: 'claude-opus-4-8' } },
+    ),
+  );
+
+  assert.equal(result.agents[0]?.model, 'sonnet');
 });

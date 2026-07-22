@@ -27,6 +27,7 @@ const CACHE_READ_MULTIPLIER = 0.1;
 // model lines (Haiku 4.x differs from Haiku 3.5) must come before any broader
 // fallback patterns to avoid silent under-pricing.
 const ANTHROPIC_MODEL_PRICING: Array<{ pattern: RegExp; pricing: ModelPricing }> = [
+  { pattern: /\bopus 4 (?:[5-9]|\d{2,})\b/i, pricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 25 } },
   { pattern: /\bopus 4(?: \d+)?\b/i, pricing: { inputUsdPerMillion: 15, outputUsdPerMillion: 75 } },
   { pattern: /\bsonnet 4(?: \d+)?\b/i, pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
   { pattern: /\bsonnet 3 7\b/i, pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
@@ -86,16 +87,13 @@ function getAnthropicPricing(stdin: StdinData): ModelPricing | null {
 export function estimateSessionCost(
   stdin: StdinData,
   sessionTokens: SessionTokenUsage | undefined,
+  options?: { allowRoutedCost?: boolean },
 ): SessionCostEstimate | null {
   if (!sessionTokens) {
     return null;
   }
 
-  if (isBedrockModelId(stdin.model?.id)) {
-    return null;
-  }
-
-  if (isVertexModelId(stdin.model?.id)) {
+  if (!options?.allowRoutedCost && (isBedrockModelId(stdin.model?.id) || isVertexModelId(stdin.model?.id))) {
     return null;
   }
 
@@ -126,18 +124,17 @@ export function estimateSessionCost(
   };
 }
 
-function getNativeCostUsd(stdin: StdinData): number | null {
+function getNativeCostUsd(stdin: StdinData, options?: { allowRoutedCost?: boolean }): number | null {
   const nativeCost = stdin.cost?.total_cost_usd;
   if (typeof nativeCost !== 'number' || !Number.isFinite(nativeCost)) {
     return null;
   }
 
-  if (isBedrockModelId(stdin.model?.id)) {
-    return null;
-  }
-
-  if (isVertexModelId(stdin.model?.id)) {
-    return null;
+  if (isBedrockModelId(stdin.model?.id) || isVertexModelId(stdin.model?.id)) {
+    // Routed native billing reads $0.00 until the first response; use it only when opted in and positive.
+    if (!options?.allowRoutedCost || nativeCost <= 0) {
+      return null;
+    }
   }
 
   return nativeCost;
@@ -146,8 +143,9 @@ function getNativeCostUsd(stdin: StdinData): number | null {
 export function resolveSessionCost(
   stdin: StdinData,
   sessionTokens: SessionTokenUsage | undefined,
+  options?: { allowRoutedCost?: boolean },
 ): SessionCostDisplay | null {
-  const nativeCostUsd = getNativeCostUsd(stdin);
+  const nativeCostUsd = getNativeCostUsd(stdin, options);
   if (nativeCostUsd !== null) {
     return {
       totalUsd: nativeCostUsd,
@@ -155,7 +153,7 @@ export function resolveSessionCost(
     };
   }
 
-  const estimate = estimateSessionCost(stdin, sessionTokens);
+  const estimate = estimateSessionCost(stdin, sessionTokens, options);
   if (!estimate) {
     return null;
   }
