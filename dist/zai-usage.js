@@ -25,6 +25,13 @@ function readCache(now) {
     try {
         const raw = fs.readFileSync(getCachePath(), 'utf8');
         const entry = JSON.parse(raw);
+        if (entry.data) {
+            const d = entry.data;
+            if (typeof d.fiveHourResetAt === 'string')
+                d.fiveHourResetAt = new Date(d.fiveHourResetAt);
+            if (typeof d.sevenDayResetAt === 'string')
+                d.sevenDayResetAt = new Date(d.sevenDayResetAt);
+        }
         const ttl = entry.ok ? CACHE_TTL_MS : CACHE_FAIL_TTL_MS;
         if (now - entry.fetchedAt < ttl)
             return entry;
